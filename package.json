@@ -1,0 +1,28 @@
+{
+  "name": "k8s-network-test",
+  "version": "1.0.0",
+  "description": "Kubernetes network testing application",
+  "main": "src/server.js",
+  "scripts": {
+    "start": "node src/server.js",
+    "dev": "nodemon src/server.js",
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "dependencies": {
+    "express": "^4.18.2",
+    "body-parser": "^1.20.2",
+    "cors": "^2.8.5",
+    "mysql2": "^3.6.0",
+    "pg": "^8.11.3",
+    "mongoose": "^7.5.0",
+    "dns": "^0.2.2",
+    "net": "^1.0.2",
+    "axios": "^1.4.0",
+    "ws": "^8.13.0",
+    "redis": "^4.6.7",
+    "amqplib": "^0.10.3"
+  },
+  "devDependencies": {
+    "nodemon": "^2.0.22"
+  }
+} 

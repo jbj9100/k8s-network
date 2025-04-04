@@ -1,0 +1,403 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Kubernetes 네트워크 테스트</title>
+    <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+    <div class="container">
+        <div class="layout">
+            <!-- 사이드바 메뉴 (왼쪽) -->
+            <div class="sidebar">
+                <div class="sidebar-header">
+                    <h3>K8s 네트워크 테스트</h3>
+                </div>
+                <div class="sidebar-menu">
+                    <h6 class="sidebar-heading">기본 네트워크 테스트</h6>
+                    <div class="menu-group">
+                        <button class="menu-item active" data-test="ping">Ping Test</button>
+                        <button class="menu-item" data-test="traceroute">Traceroute Test</button>
+                        <button class="menu-item" data-test="nslookup">DNS Lookup</button>
+                        <button class="menu-item" data-test="tcp">TCP Port Test</button>
+                        <button class="menu-item" data-test="udp">UDP Port Test</button>
+                    </div>
+                    
+                    <!-- 데이터베이스 테스트 -->
+                    <div class="sidebar-menu-category">
+                        <h3><i class="fas fa-database"></i> 데이터베이스 테스트</h3>
+                        <ul class="sidebar-menu">
+                            <li data-test="mysql">
+                                <i class="fas fa-database"></i> MySQL
+                            </li>
+                            <li data-test="postgres">
+                                <i class="fas fa-database"></i> PostgreSQL
+                            </li>
+                            <li data-test="mongodb">
+                                <i class="fas fa-database"></i> MongoDB
+                            </li>
+                            <li data-test="redis">
+                                <i class="fas fa-database"></i> Redis
+                            </li>
+                        </ul>
+                    </div>
+                    
+                    <h6 class="sidebar-heading">API 및 메시징 테스트</h6>
+                    <div class="menu-group">
+                        <button class="menu-item" data-test="http">HTTP API Test</button>
+                        <button class="menu-item" data-test="websocket">WebSocket Test</button>
+                        <button class="menu-item" data-test="rabbitmq">RabbitMQ Test</button>
+                    </div>
+                    
+                    <h6 class="sidebar-heading">보안 및 시스템</h6>
+                    <div class="menu-group">
+                        <button class="menu-item" data-test="ssl">SSL Certificate</button>
+                        <button class="menu-item" data-test="sysinfo">System Info</button>
+                    </div>
+                </div>
+            </div>
+            
+            <!-- 메인 컨텐츠 영역 (오른쪽) -->
+            <div class="main-content">
+                <div class="test-card">
+                    <div class="test-header">
+                        <h5 id="test-title">Ping Test</h5>
+                        <span id="status-badge" class="badge">Ready</span>
+                    </div>
+                    <div class="test-body">
+                        <!-- Ping 테스트 폼 -->
+                        <div id="ping-form" class="test-form">
+                            <div class="form-group">
+                                <label for="ping-host">Host or IP Address</label>
+                                <input type="text" id="ping-host" placeholder="example.com or 192.168.1.1">
+                            </div>
+                            <div class="form-group">
+                                <label for="ping-count">Count (Number of ping requests)</label>
+                                <input type="number" id="ping-count" placeholder="4" value="4" min="1" max="100">
+                            </div>
+                            <div class="realtime-option">
+                                <div class="checkbox">
+                                    <input type="checkbox" id="ping-realtime" checked>
+                                    <label for="ping-realtime">실시간으로 결과 표시</label>
+                                    <small class="help-text">결과가 생성되는 즉시 표시됩니다</small>
+                                </div>
+                            </div>
+                            <button id="ping-submit" class="btn-primary">Run Test</button>
+                        </div>
+                        
+                        <!-- Traceroute 테스트 폼 -->
+                        <div id="traceroute-form" class="test-form hidden">
+                            <div class="form-group">
+                                <label for="traceroute-host">Host or IP Address</label>
+                                <input type="text" id="traceroute-host" placeholder="example.com or 192.168.1.1">
+                            </div>
+                            <div class="realtime-option">
+                                <div class="checkbox">
+                                    <input type="checkbox" id="traceroute-realtime" checked>
+                                    <label for="traceroute-realtime">실시간으로 결과 표시</label>
+                                    <small class="help-text">각 홉(hop)이 탐지되는 즉시 표시됩니다</small>
+                                </div>
+                            </div>
+                            <button id="traceroute-submit" class="btn-primary">Run Test</button>
+                        </div>
+                        
+                        <!-- DNS Lookup 테스트 폼 -->
+                        <div id="nslookup-form" class="test-form hidden">
+                            <div class="form-group">
+                                <label for="nslookup-host">Domain Name</label>
+                                <input type="text" id="nslookup-host" placeholder="example.com">
+                            </div>
+                            <div class="form-group">
+                                <label for="nslookup-type">Record Type (Optional)</label>
+                                <select id="nslookup-type">
+                                    <option value="ANY" selected>ANY</option>
+                                    <option value="A">A</option>
+                                    <option value="AAAA">AAAA</option>
+                                    <option value="CNAME">CNAME</option>
+                                    <option value="MX">MX</option>
+                                    <option value="NS">NS</option>
+                                    <option value="TXT">TXT</option>
+                                    <option value="SRV">SRV</option>
+                                    <option value="PTR">PTR</option>
+                                </select>
+                            </div>
+                            <button id="nslookup-submit" class="btn-primary">Run Test</button>
+                        </div>
+                        
+                        <!-- MySQL 테스트 폼 (통합) -->
+                        <div id="mysql-form" class="test-form hidden">
+                            <div class="form-group">
+                                <label for="mysql-host">Host</label>
+                                <input type="text" id="mysql-host" placeholder="mysql.example.com">
+                            </div>
+                            <div class="form-group">
+                                <label for="mysql-port">Port</label>
+                                <input type="number" id="mysql-port" placeholder="3306" value="3306">
+                            </div>
+                            <div class="form-group">
+                                <label for="mysql-user">Username</label>
+                                <input type="text" id="mysql-user" placeholder="root">
+                            </div>
+                            <div class="form-group">
+                                <label for="mysql-password">Password</label>
+                                <input type="password" id="mysql-password">
+                            </div>
+                            <div class="form-group">
+                                <label for="mysql-database">Database</label>
+                                <input type="text" id="mysql-database" placeholder="mysql">
+                            </div>
+                            <div class="form-group">
+                                <label for="mysql-query">SQL Query (SELECT only, 선택사항)</label>
+                                <textarea id="mysql-query" rows="3" placeholder="SELECT * FROM users LIMIT 10"></textarea>
+                                <small class="help-text">쿼리를 입력하지 않으면 연결 테스트만 수행합니다</small>
+                            </div>
+                            <button id="mysql-submit" class="btn-primary">Test MySQL</button>
+                        </div>
+
+                        <!-- UDP 테스트 폼 -->
+                        <div id="udp-form" class="test-form hidden">
+                            <div class="form-group">
+                                <label for="udp-host">Host or IP Address</label>
+                                <input type="text" id="udp-host" placeholder="example.com or 192.168.1.1">
+                            </div>
+                            <div class="form-group">
+                                <label for="udp-port">Port</label>
+                                <input type="number" id="udp-port" placeholder="53">
+                            </div>
+                            <div class="form-group">
+                                <label for="udp-data">Data to send (optional)</label>
+                                <input type="text" id="udp-data" placeholder="Hello World">
+                            </div>
+                            <div class="form-group">
+                                <label for="udp-timeout">Timeout (ms)</label>
+                                <input type="number" id="udp-timeout" placeholder="3000" value="3000">
+                            </div>
+                            <button id="udp-submit" class="btn-primary">Test UDP Connection</button>
+                        </div>
+
+                        <!-- TCP 포트 테스트 폼 -->
+                        <div id="tcp-form" class="test-form hidden">
+                            <div class="form-group">
+                                <label for="tcp-host">Host or IP Address</label>
+                                <input type="text" id="tcp-host" placeholder="example.com or 192.168.1.1">
+                            </div>
+                            <div class="form-group">
+                                <label for="tcp-port">Port</label>
+                                <input type="number" id="tcp-port" placeholder="80">
+                            </div>
+                            <button id="tcp-submit" class="btn-primary">Test TCP Connection</button>
+                        </div>
+
+                        <!-- WebSocket 테스트 폼 -->
+                        <div id="websocket-form" class="test-form hidden">
+                            <div class="form-group">
+                                <label for="websocket-url">WebSocket URL</label>
+                                <input type="text" id="websocket-url" placeholder="ws://example.com/socket">
+                            </div>
+                            <div class="button-group">
+                                <button id="websocket-connect" class="btn-primary">Connect</button>
+                                <button id="websocket-disconnect" class="btn-secondary hidden">Disconnect</button>
+                            </div>
+                            
+                            <div id="websocket-message-panel" class="message-panel hidden">
+                                <div class="form-group">
+                                    <label for="websocket-message">Message</label>
+                                    <input type="text" id="websocket-message" placeholder="Enter message to send">
+                                </div>
+                                <button id="websocket-send" class="btn-primary">Send Message</button>
+                                
+                                <div class="messages-container">
+                                    <h6>WebSocket Messages</h6>
+                                    <div id="websocket-messages" class="messages"></div>
+                                </div>
+                            </div>
+                            
+                            <div class="echo-test-panel">
+                                <h6>Test with Built-in Echo Server</h6>
+                                <p class="help-text">Connect to the built-in WebSocket echo server:</p>
+                                <button id="websocket-echo-test" class="btn-outline">Use Echo Server</button>
+                            </div>
+                        </div>
+
+                        <!-- HTTP API 테스트 폼 -->
+                        <div id="http-form" class="test-form hidden">
+                            <div class="form-group">
+                                <label for="http-url">URL</label>
+                                <input type="text" id="http-url" placeholder="https://api.example.com/endpoint">
+                            </div>
+                            <div class="form-group">
+                                <label for="http-method">Method</label>
+                                <select id="http-method">
+                                    <option value="GET">GET</option>
+                                    <option value="POST">POST</option>
+                                    <option value="PUT">PUT</option>
+                                    <option value="DELETE">DELETE</option>
+                                </select>
+                            </div>
+                            <div class="form-group">
+                                <label for="http-headers">Headers (JSON, optional)</label>
+                                <textarea id="http-headers" rows="3" placeholder='{"Content-Type": "application/json"}'></textarea>
+                            </div>
+                            <div class="form-group">
+                                <label for="http-data">Request Body (JSON, optional)</label>
+                                <textarea id="http-data" rows="3" placeholder='{"key": "value"}'></textarea>
+                            </div>
+                            <button id="http-submit" class="btn-primary">Send Request</button>
+                        </div>
+
+                        <!-- PostgreSQL 테스트 폼 (통합) -->
+                        <div id="postgres-form" class="test-form hidden">
+                            <div class="form-group">
+                                <label for="postgres-host">Host</label>
+                                <input type="text" id="postgres-host" placeholder="postgres.example.com">
+                            </div>
+                            <div class="form-group">
+                                <label for="postgres-port">Port</label>
+                                <input type="number" id="postgres-port" placeholder="5432" value="5432">
+                            </div>
+                            <div class="form-group">
+                                <label for="postgres-user">Username</label>
+                                <input type="text" id="postgres-user" placeholder="postgres">
+                            </div>
+                            <div class="form-group">
+                                <label for="postgres-password">Password</label>
+                                <input type="password" id="postgres-password">
+                            </div>
+                            <div class="form-group">
+                                <label for="postgres-database">Database</label>
+                                <input type="text" id="postgres-database" placeholder="postgres">
+                            </div>
+                            <div class="form-group">
+                                <label for="postgres-query">SQL Query (SELECT only, 선택사항)</label>
+                                <textarea id="postgres-query" rows="3" placeholder="SELECT * FROM users LIMIT 10"></textarea>
+                                <small class="help-text">쿼리를 입력하지 않으면 연결 테스트만 수행합니다</small>
+                            </div>
+                            <button id="postgres-submit" class="btn-primary">Test PostgreSQL</button>
+                        </div>
+
+                        <!-- MongoDB 테스트 폼 (통합) -->
+                        <div id="mongodb-form" class="test-form hidden">
+                            <div class="form-group">
+                                <label for="mongodb-host">Host</label>
+                                <input type="text" id="mongodb-host" placeholder="mongodb.example.com">
+                            </div>
+                            <div class="form-group">
+                                <label for="mongodb-port">Port</label>
+                                <input type="number" id="mongodb-port" placeholder="27017" value="27017">
+                            </div>
+                            <div class="form-group">
+                                <label for="mongodb-user">Username (optional)</label>
+                                <input type="text" id="mongodb-user">
+                            </div>
+                            <div class="form-group">
+                                <label for="mongodb-password">Password (optional)</label>
+                                <input type="password" id="mongodb-password">
+                            </div>
+                            <div class="form-group">
+                                <label for="mongodb-database">Database</label>
+                                <input type="text" id="mongodb-database" placeholder="admin">
+                            </div>
+                            <div class="query-section">
+                                <div class="form-group">
+                                    <label for="mongodb-collection">Collection (선택사항)</label>
+                                    <input type="text" id="mongodb-collection" placeholder="users">
+                                </div>
+                                <div class="form-group">
+                                    <label for="mongodb-query">Query (JSON, 선택사항)</label>
+                                    <textarea id="mongodb-query" rows="2" placeholder='{}'></textarea>
+                                </div>
+                                <div class="form-group">
+                                    <label for="mongodb-projection">Projection (JSON, 선택사항)</label>
+                                    <textarea id="mongodb-projection" rows="2" placeholder='{"_id": 0}'></textarea>
+                                </div>
+                                <div class="form-group">
+                                    <label for="mongodb-limit">Limit (선택사항)</label>
+                                    <input type="number" id="mongodb-limit" value="10">
+                                </div>
+                                <small class="help-text">컬렉션을 지정하지 않으면 연결 테스트만 수행합니다</small>
+                            </div>
+                            <button id="mongodb-submit" class="btn-primary">Test MongoDB</button>
+                        </div>
+
+                        <!-- Redis 테스트 폼 -->
+                        <div id="redis-form" class="test-form hidden">
+                            <div class="form-group">
+                                <label for="redis-host">Host</label>
+                                <input type="text" id="redis-host" placeholder="redis.example.com">
+                            </div>
+                            <div class="form-group">
+                                <label for="redis-port">Port</label>
+                                <input type="number" id="redis-port" placeholder="6379" value="6379">
+                            </div>
+                            <div class="form-group">
+                                <label for="redis-password">Password (선택사항)</label>
+                                <input type="password" id="redis-password">
+                            </div>
+                            <div class="form-group">
+                                <label for="redis-db">Database Number</label>
+                                <input type="number" id="redis-db" placeholder="0" value="0">
+                            </div>
+                            <button id="redis-submit" class="btn-primary">Test Redis</button>
+                        </div>
+
+                        <!-- RabbitMQ 테스트 폼 -->
+                        <div id="rabbitmq-form" class="test-form hidden">
+                            <div class="form-group">
+                                <label for="rabbitmq-host">Host</label>
+                                <input type="text" id="rabbitmq-host" placeholder="rabbitmq.example.com">
+                            </div>
+                            <div class="form-group">
+                                <label for="rabbitmq-port">Port</label>
+                                <input type="number" id="rabbitmq-port" placeholder="5672" value="5672">
+                            </div>
+                            <div class="form-group">
+                                <label for="rabbitmq-user">Username (optional)</label>
+                                <input type="text" id="rabbitmq-user" placeholder="guest">
+                            </div>
+                            <div class="form-group">
+                                <label for="rabbitmq-password">Password (optional)</label>
+                                <input type="password" id="rabbitmq-password" placeholder="guest">
+                            </div>
+                            <div class="form-group">
+                                <label for="rabbitmq-vhost">Virtual Host (optional)</label>
+                                <input type="text" id="rabbitmq-vhost">
+                            </div>
+                            <button id="rabbitmq-submit" class="btn-primary">Test Connection</button>
+                        </div>
+
+                        <!-- SSL 인증서 테스트 폼 -->
+                        <div id="ssl-form" class="test-form hidden">
+                            <div class="form-group">
+                                <label for="ssl-host">Host</label>
+                                <input type="text" id="ssl-host" placeholder="example.com">
+                            </div>
+                            <div class="form-group">
+                                <label for="ssl-port">Port</label>
+                                <input type="number" id="ssl-port" placeholder="443" value="443">
+                            </div>
+                            <button id="ssl-submit" class="btn-primary">Check Certificate</button>
+                        </div>
+
+                        <!-- System Info 테스트 폼 -->
+                        <div id="sysinfo-form" class="test-form hidden">
+                            <div class="form-group">
+                                <p>이 테스트는 서버의 시스템 정보를 표시합니다.</p>
+                            </div>
+                            <button id="sysinfo-submit" class="btn-primary">Get System Information</button>
+                        </div>
+
+                        <!-- 결과 영역 -->
+                        <div class="results-wrapper">
+                            <h6>Test Results</h6>
+                            <div id="results" class="results-container"></div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+    
+    <script src="script.js"></script>
+</body>
+</html> 

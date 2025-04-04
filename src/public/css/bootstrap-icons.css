@@ -1,0 +1,65 @@
+@font-face {
+  font-display: block;
+  font-family: "bootstrap-icons";
+  src: url("../fonts/bootstrap-icons.woff2") format("woff2"),
+       url("../fonts/bootstrap-icons.woff") format("woff");
+}
+
+.bi::before,
+[class^="bi-"]::before,
+[class*=" bi-"]::before {
+  display: inline-block;
+  font-family: bootstrap-icons !important;
+  font-style: normal;
+  font-weight: normal !important;
+  font-variant: normal;
+  text-transform: none;
+  line-height: 1;
+  vertical-align: -.125em;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+.bi-check-circle-fill::before { content: "\f26a"; }
+.bi-check-circle::before { content: "\f26b"; }
+.bi-check-lg::before { content: "\f26d"; }
+.bi-check-square-fill::before { content: "\f26e"; }
+.bi-check-square::before { content: "\f26f"; }
+.bi-check::before { content: "\f26c"; }
+.bi-circle-fill::before { content: "\f2d7"; }
+.bi-circle::before { content: "\f286"; }
+.bi-clipboard-check::before { content: "\f28d"; }
+.bi-clipboard-data::before { content: "\f28e"; }
+.bi-clock-fill::before { content: "\f29a"; }
+.bi-clock-history::before { content: "\f29b"; }
+.bi-clock::before { content: "\f299"; }
+.bi-database::before { content: "\f2e8"; }
+.bi-exclamation-circle-fill::before { content: "\f33a"; }
+.bi-exclamation-circle::before { content: "\f33b"; }
+.bi-exclamation-triangle-fill::before { content: "\f33f"; }
+.bi-exclamation-triangle::before { content: "\f340"; }
+.bi-globe::before { content: "\f3e0"; }
+.bi-info-circle-fill::before { content: "\f430"; }
+.bi-info-circle::before { content: "\f431"; }
+.bi-question-circle-fill::before { content: "\f600"; }
+.bi-question-circle::before { content: "\f601"; }
+.bi-send-check-fill::before { content: "\f668"; }
+.bi-send-check::before { content: "\f669"; }
+.bi-server::before { content: "\f66b"; }
+.bi-wifi-off::before { content: "\f7a3"; }
+.bi-wifi::before { content: "\f7a2"; }
+.bi-x-circle-fill::before { content: "\f7ab"; }
+.bi-x-circle::before { content: "\f7ac"; }
+.bi-x-lg::before { content: "\f659"; }
+.bi-x::before { content: "\f62a"; }
+.bi-arrow-repeat::before { content: "\f130"; }
+.bi-arrow-clockwise::before { content: "\f116"; }
+.bi-arrow-counterclockwise::before { content: "\f117"; }
+.bi-gear-fill::before { content: "\f3db"; }
+.bi-gear::before { content: "\f3da"; }
+.bi-plus-lg::before { content: "\f5bc"; }
+.bi-dash-lg::before { content: "\f2e9"; }
+.bi-eye-fill::before { content: "\f359"; }
+.bi-eye::before { content: "\f358"; }
+.bi-mouse::before { content: "\f4fe"; }
+.bi-table::before { content: "\f6f6"; } 
