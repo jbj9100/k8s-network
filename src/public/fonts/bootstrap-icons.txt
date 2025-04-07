@@ -1,7 +1,0 @@
-이 폴더에는 Bootstrap Icons 폰트 파일이 들어갑니다.
-실제 프로덕션 환경에서는 다음 파일들이 필요합니다:
-- bootstrap-icons.woff
-- bootstrap-icons.woff2
-
-이 파일들은 https://icons.getbootstrap.com/ 에서 다운로드 가능합니다.
-폰트 파일은 용량이 크기 때문에 여기서는 설명 파일만 포함합니다. 

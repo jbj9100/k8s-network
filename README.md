@@ -1,98 +1,81 @@
-# Kubernetes Network Testing Tool
+# K8s 네트워크 테스트 도구
 
-웹 기반 UI를 통해 Kubernetes 환경에서 네트워크 연결 및 통신을 테스트할 수 있는 도구입니다.
+네트워크 연결 테스트 및 진단을 위한 웹 기반 도구입니다. 다양한 프로토콜과 서비스에 대한 연결 테스트를 수행할 수 있습니다.
 
 ## 기능
 
-- **네트워크 연결 테스트**:
+- **기본 네트워크 테스트**: Ping, Traceroute, DNS Lookup, TCP/UDP 포트 테스트, Curl 요청
+- **데이터베이스 테스트**: MySQL, PostgreSQL, MongoDB, Redis 연결 테스트
+- **API 및 메시징 테스트**: HTTP API, WebSocket, RabbitMQ 연결 테스트
+- **보안 및 시스템**: SSL 인증서 정보 확인, 시스템 정보 확인
 
-  - **Ping 테스트**: 호스트/IP 주소에 대한 ICMP ping 테스트
-  - **Traceroute 테스트**: 네트워크 경로 추적
-  - **DNS 조회(nslookup)**: 도메인 이름 해석 및 특정 DNS 레코드 조회 (A, AAAA, MX, TXT 등)
-  - **TCP 포트 연결 테스트**: 지정된 호스트와 포트에 대한 TCP 연결 테스트
-
-- **데이터베이스 연결 및 쿼리 테스트**:
-
-  - **MySQL/MariaDB**:
-    - 연결 테스트
-    - SQL 쿼리 테스트 (읽기 전용)
-  - **PostgreSQL**:
-    - 연결 테스트
-    - SQL 쿼리 테스트 (읽기 전용)
-  - **MongoDB**:
-    - 연결 테스트
-    - 쿼리 테스트 (읽기 전용)
-
-- **메시징 및 캐시 시스템 테스트**:
-
-  - **Redis**: 연결 테스트 및 정보 확인
-  - **RabbitMQ**: 연결 테스트
-
-- **웹 기반 프로토콜 테스트**:
-
-  - **HTTP API 테스트**: 다양한 HTTP 메서드로 API 엔드포인트 요청
-  - **WebSocket 테스트**: WebSocket 연결 및 메시지 송수신
-  - **SSL/TLS 인증서 검사**: 호스트 SSL 인증서 정보 확인
-
-- **시스템 정보**:
-  - 호스트 이름, 플랫폼, 아키텍처, 네트워크 인터페이스 등 시스템 정보 확인
-
-## 설치 및 실행 방법
+## 실행 방법
 
 ### 로컬 실행
 
-```bash
-# 의존성 설치
-npm install
+1. 의존성 패키지 설치:
 
-# 애플리케이션 실행
+```bash
+npm install
+```
+
+2. 애플리케이션 실행:
+
+```bash
 npm start
 ```
 
-### Docker로 실행
+3. 사용자 지정 포트로 실행 (기본값: 3000):
 
 ```bash
-# Docker 이미지 빌드
-docker build -t network-test:latest .
-
-# Docker 컨테이너 실행
-docker run -p 3000:3000 network-test:latest
+npm start --port=8080
 ```
 
-### Kubernetes에 배포
+> **참고**: 포트는 다음 방법 중 하나로 지정할 수 있습니다:
+>
+> - npm 옵션: `npm start --port=8080`
+> - 환경 변수: `PORT=8080 npm start`
+> - 명령줄 인수: `node src/server.js --port=8080`
+
+### Docker 실행
+
+### 이미지 빌드
 
 ```bash
-# Kubernetes 디렉토리로 이동
-cd k8s
-
-# Deployment 및 Service 배포
-kubectl apply -f deployment.yaml
-kubectl apply -f service.yaml
+docker build -t k8s-network-test .
 ```
 
-## Kubernetes 매니페스트 수정
+### 컨테이너 실행
 
-배포하기 전에 필요에 따라 `k8s/deployment.yaml` 파일의 이미지 태그를 업데이트하세요:
-
-```yaml
-image: your-registry/network-test:your-tag
+```bash
+docker run -d --name network-tester -p 3000:3000 --cap-add=NET_ADMIN --cap-add=NET_RAW k8s-network-test
 ```
 
-## 매니페스트 구성 설명
+`--cap-add=NET_ADMIN --cap-add=NET_RAW` 옵션은 ping, traceroute 등의 네트워크 도구를 사용하기 위해 필요합니다.
 
-- **deployment.yaml**: Pod 배포, 리소스 제한, 헬스 체크 설정
-- **service.yaml**: 서비스 노출(NodePort 타입으로 설정되어 있음)
+### 또는 권한 모드로 실행 (개발/테스트 환경에서만 사용)
 
-## 브라우저 접속
+```bash
+docker run -d --name network-tester -p 3000:3000 --privileged k8s-network-test
+```
 
-서비스가 배포된 후 다음 URL로 접속할 수 있습니다:
+**주의**: `--privileged` 옵션은 컨테이너에 호스트 시스템에 대한 높은 수준의 권한을 부여합니다. 운영 환경에서는 최소 권한 원칙에 따라 `--cap-add` 옵션을 사용하는 것이 좋습니다.
 
-- `http://<node-ip>:<node-port>` (NodePort 타입)
-- `http://network-test.your-namespace.svc.cluster.local` (클러스터 내부에서)
+## 폐쇄망에서 사용하기
 
-## 보안 고려사항
+이 Docker 이미지는 폐쇄망 환경에서 사용할 수 있도록 설계되었습니다. 필요한 모든 종속성이 이미지에 포함되어 있습니다.
 
-- 이 도구는 내부 네트워크 및 서비스 테스트용으로 설계되었습니다.
-- 공개 인터넷에 노출하지 마십시오.
-- 데이터베이스 쿼리는 읽기 전용(SELECT)으로 제한되어 있습니다.
-- 운영 환경에 배포할 때는 적절한 네트워크 정책과 RBAC를 설정하세요.
+1. 인터넷에 연결된 환경에서 이미지를 빌드합니다.
+2. 이미지를 저장하여 폐쇄망으로 전송합니다:
+   ```bash
+   docker save -o k8s-network-test.tar k8s-network-test
+   ```
+3. 폐쇄망 환경에서 이미지를 로드합니다:
+   ```bash
+   docker load -i k8s-network-test.tar
+   ```
+4. 위의 실행 명령을 사용하여 컨테이너를 시작합니다.
+
+## 접속 방법
+
+브라우저에서 `http://localhost:3000`로 접속합니다.

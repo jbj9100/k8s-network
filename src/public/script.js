@@ -17,20 +17,44 @@ document.addEventListener('DOMContentLoaded', function() {
     // Active command ID
     let activeCommandId = null;
     
+    // Create abort controller for API requests
+    let currentController = null;
+    
+    // Cancel button
+    const cancelButton = document.createElement('button');
+    cancelButton.textContent = 'Cancel Test';
+    cancelButton.className = 'btn-danger cancel-test-btn';
+    cancelButton.style.display = 'none';
+    cancelButton.addEventListener('click', cancelCurrentTest);
+    
+    // Add the cancel button to the page
+    const mainContent = document.querySelector('.main-content');
+    if (mainContent) {
+        const actionBar = document.createElement('div');
+        actionBar.className = 'action-bar';
+        actionBar.appendChild(cancelButton);
+        
+        // Insert it after the status badge
+        const testHeader = document.querySelector('.test-header');
+        if (testHeader) {
+            testHeader.appendChild(actionBar);
+        }
+    }
+    
     // Active test type
-    let activeTestType = 'ping'; // 기본값은 ping
+    let activeTestType = 'ping'; // Default is ping
     
     // Initialize test navigation
     testButtons.forEach(button => {
         button.addEventListener('click', function() {
             const testType = this.getAttribute('data-test');
             
-            // 테스트 타입이 변경될 때만 결과 초기화
+            // Reset results only when test type changes
             if (testType !== activeTestType) {
-                // 결과 컨테이너 초기화
+                // Clear results container
                 clearResults();
                 
-                // 활성 테스트 타입 업데이트
+                // Update active test type
                 activeTestType = testType;
             }
             
@@ -46,7 +70,7 @@ document.addEventListener('DOMContentLoaded', function() {
                 form.classList.add('hidden');
             });
             
-            // 해당 테스트 폼이 존재하는지 확인 후 표시
+            // Check if form exists and display it
             const formElement = document.getElementById(`${testType}-form`);
             if (formElement) {
                 formElement.classList.remove('hidden');
@@ -59,7 +83,7 @@ document.addEventListener('DOMContentLoaded', function() {
         });
     });
     
-    // 결과 컨테이너 초기화 함수
+    // Clear results container function
     function clearResults() {
         if (resultsContainer) {
             resultsContainer.innerHTML = '';
@@ -77,53 +101,90 @@ document.addEventListener('DOMContentLoaded', function() {
         
         return new Promise((resolve, reject) => {
             const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
-            const wsUrl = `${protocol}//${window.location.host}`;
+            const wsUrl = `${protocol}//${window.location.host}/ws`;
             
+            console.log('WebSocket URL:', wsUrl);
             commandWebSocket = new WebSocket(wsUrl);
             
             commandWebSocket.onopen = function() {
+                console.log('WebSocket connection successful');
                 resolve(commandWebSocket);
             };
             
             commandWebSocket.onerror = function(error) {
+                console.error('WebSocket connection error:', error);
                 reject(error);
             };
             
             commandWebSocket.onmessage = function(event) {
                 try {
                     const response = JSON.parse(event.data);
+                    console.log('WebSocket response:', response);
                     
+                    // Connection confirmation message
+                    if (response.type === 'connected') {
+                        console.log('WebSocket server connection status:', response.message);
+                        return;
+                    }
+                    
+                    // Echo test response
+                    if (response.type === 'echo') {
+                        console.log('Echo response:', response.data);
+                        return;
+                    }
+                    
+                    // Process output or error messages
                     if (response.type === 'output' || response.type === 'error') {
-                        // Only process if this is for the active command
+                        // Only process output for the active command
                         if (response.id === activeCommandId) {
                             const currentText = resultsContainer.innerHTML;
-                            // Append new output
-                            if (currentText === '' || currentText.includes('명령어 실행 중...')) {
+                            
+                            // Replace if there's an "executing" message, otherwise append
+                            if (currentText === '' || currentText.includes('Executing command...')) {
                                 resultsContainer.innerHTML = `<pre>${response.data}</pre>`;
                             } else {
-                                // Extract existing content from pre tag
+                                // Find existing pre tag and append
                                 const preElement = resultsContainer.querySelector('pre');
                                 if (preElement) {
                                     preElement.textContent += response.data;
-                                    // Scroll to bottom
                                     preElement.scrollTop = preElement.scrollHeight;
                                 } else {
                                     resultsContainer.innerHTML += `<pre>${response.data}</pre>`;
                                 }
                             }
                         }
-                    } else if (response.type === 'complete') {
-                        // Command completed
+                    } 
+                    // Command completion handling
+                    else if (response.type === 'complete') {
                         if (response.id === activeCommandId) {
                             setStatus(response.exitCode === 0 ? 'success' : 'failed');
+                            cancelButton.style.display = 'none';
+                            activeCommandId = null;
+                        }
+                    } 
+                    // Command cancellation handling
+                    else if (response.type === 'cancelled') {
+                        if (response.id === activeCommandId) {
+                            setStatus('ready');
+                            displayResults('Command was canceled: ' + response.message, false);
+                            cancelButton.style.display = 'none';
+                            activeCommandId = null;
                         }
                     }
                 } catch (error) {
-                    console.error('Error parsing WebSocket message:', error);
+                    console.error('WebSocket message parsing error:', error);
                 }
             };
             
             commandWebSocket.onclose = function() {
+                console.log('WebSocket connection closed');
+                
+                // Reset state if there was an active command
+                if (activeCommandId) {
+                    cancelButton.style.display = 'none';
+                    activeCommandId = null;
+                }
+                
                 commandWebSocket = null;
             };
         });
@@ -132,7 +193,7 @@ document.addEventListener('DOMContentLoaded', function() {
     // Execute real-time command
     async function executeRealtimeCommand(cmd, args) {
         try {
-            // Initialize WebSocket if needed
+            // WebSocket connection initialization
             await initCommandSocket();
             
             // Generate unique command ID
@@ -140,44 +201,87 @@ document.addEventListener('DOMContentLoaded', function() {
             const commandId = `cmd_${Date.now()}_${commandCounter}`;
             activeCommandId = commandId;
             
-            // Clear previous results and add realtime indicator
-            resultsContainer.innerHTML = '<div>명령어 실행 중...</div>';
+            // Reset previous results and show execution status
+            resultsContainer.innerHTML = '<div>Executing command...</div>';
             resultsContainer.classList.add('realtime-active');
+            
+            // Show cancel button
+            cancelButton.style.display = 'inline-block';
+            
+            console.log(`Executing real-time command: ${cmd}`, args);
             
             // Send command
             commandWebSocket.send(JSON.stringify({
                 type: 'command',
                 id: commandId,
-                cmd,
-                args
+                cmd: cmd,
+                args: args
             }));
             
             setStatus('running');
             return true;
         } catch (error) {
-            console.error('WebSocket error:', error);
-            displayResult('실시간 명령 실행에 실패했습니다. API를 통해 시도합니다.', 'error');
+            console.error('WebSocket execution error:', error);
+            displayResults('Real-time command execution failed. Trying API fallback...', true);
             return false;
         }
     }
     
-    // Status update function
+    // Function to cancel current test
+    function cancelCurrentTest() {
+        // Cancel API requests
+        if (currentController) {
+            currentController.abort();
+            currentController = null;
+        }
+        
+        // Close WebSocket connections
+        if (commandWebSocket && activeCommandId) {
+            try {
+                commandWebSocket.send(JSON.stringify({
+                    type: 'cancel',
+                    id: activeCommandId
+                }));
+            } catch (e) {
+                console.error('Error sending cancel command:', e);
+            }
+        }
+        
+        // Reset UI
+        cancelButton.style.display = 'none';
+        setStatus('ready');
+        displayResults('Test cancelled by user', true);
+        
+        // Reset variables
+        activeCommandId = null;
+    }
+    
+    // Update status function
     function setStatus(status) {
         statusBadge.textContent = status.charAt(0).toUpperCase() + status.slice(1);
         statusBadge.className = 'badge';
         
-        switch(status) {
-            case 'ready':
-                statusBadge.classList.add('bg-secondary');
-                break;
+        switch(status.toLowerCase()) {
             case 'running':
-                statusBadge.classList.add('bg-warning');
-                break;
-            case 'success':
-                statusBadge.classList.add('bg-success');
+                statusBadge.classList.add('badge-running');
+                // Show cancel button when test is running
+                cancelButton.style.display = 'inline-block';
                 break;
             case 'failed':
-                statusBadge.classList.add('bg-danger');
+                statusBadge.classList.add('badge-failed');
+                // Hide cancel button on failure
+                cancelButton.style.display = 'none';
+                break;
+            case 'success':
+                statusBadge.classList.add('badge-completed');
+                // Hide cancel button on success
+                cancelButton.style.display = 'none';
+                break;
+            case 'ready':
+            default:
+                statusBadge.classList.add('badge-ready');
+                // Hide cancel button when ready
+                cancelButton.style.display = 'none';
                 break;
         }
     }
@@ -258,7 +362,7 @@ document.addEventListener('DOMContentLoaded', function() {
         }
     }
     
-    // 웹소켓 메시지 표시
+    // WebSocket message display
     function displayWebSocketMessage(messagesContainer, message, sent = false) {
         const messageElement = document.createElement('div');
         messageElement.className = sent ? 'text-end' : 'text-start';
@@ -272,231 +376,209 @@ document.addEventListener('DOMContentLoaded', function() {
         messagesContainer.scrollTop = messagesContainer.scrollHeight;
     }
     
-    // API request function
+    // Make API request with cancelation support
     async function makeRequest(endpoint, data) {
-        setStatus('running');
-        
         try {
+            // Update status to running
+            setStatus('running');
+            
+            // Create new AbortController for this request
+            currentController = new AbortController();
+            
+            // Make the API request
             const response = await fetch(`${API_BASE_URL}${endpoint}`, {
                 method: 'POST',
-                headers: {
-                    'Content-Type': 'application/json'
-                },
-                body: JSON.stringify(data)
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(data),
+                signal: currentController.signal // Add abort signal
             });
             
-            // 응답이 JSON이 아닌 경우 처리
-            let result;
-            const contentType = response.headers.get('content-type');
-            
-            if (contentType && contentType.includes('application/json')) {
-                try {
-                    result = await response.json();
-                } catch (error) {
-                    console.error('JSON 파싱 오류:', error);
-                    setStatus('failed');
-                    throw new Error('서버 응답을 파싱할 수 없습니다. 응답이 유효한 JSON 형식이 아닙니다.');
-                }
-            } else {
-                // JSON이 아닌 경우 텍스트로 처리
-                const text = await response.text();
-                result = { result: text };
-            }
+            // Clear controller reference after request completes
+            currentController = null;
             
             if (!response.ok) {
-                setStatus('failed');
-                throw new Error(result.error || `요청 실패: ${response.status} ${response.statusText}`);
+                const errorData = await response.json();
+                throw new Error(errorData.error || 'Request failed');
             }
             
+            const result = await response.json();
             setStatus('success');
             return result;
         } catch (error) {
-            console.error('API 요청 오류:', error);
+            // Don't show error if request was cancelled
+            if (error.name === 'AbortError') {
+                console.log('Request was cancelled');
+                return { cancelled: true };
+            }
+            
             setStatus('failed');
             throw error;
         }
     }
     
     // Ping Test Form
-    document.getElementById('ping-submit')?.addEventListener('click', async function() {
-        const host = document.getElementById('ping-host').value;
-        const count = document.getElementById('ping-count').value;
-        const realtime = document.getElementById('ping-realtime').checked;
-        
-        if (!host) {
-            displayResults('Host is required', true);
-            return;
-        }
-
-        // 테스트 시작 전 결과 영역 초기화
-        clearResults();
-
-        if (realtime) {
-            // Real-time ping using WebSocket
-            const success = await executeRealtimeCommand('ping', { host, count });
-            if (!success) {
-                displayResults('WebSocket 연결 실패, API를 통해 시도합니다...', true);
-                // Fall back to API approach
-                pingViaApi(host, count);
-            }
-        } else {
-            // Use API approach
-            pingViaApi(host, count);
-        }
-    });
+    const pingSubmitBtn = document.getElementById('ping-submit');
+    const pingHostInput = document.getElementById('ping-host');
+    const pingCountInput = document.getElementById('ping-count');
+    const pingRealtimeCheckbox = document.getElementById('ping-realtime');
     
-    // Ping via API
-    async function pingViaApi(host, count) {
-        try {
-            setStatus('running');
+    if (pingSubmitBtn) {
+        pingSubmitBtn.addEventListener('click', async function() {
+            const host = pingHostInput.value.trim();
+            if (!host) {
+                displayResults('Host is required', true);
+                return;
+            }
+            
+            const count = parseInt(pingCountInput.value) || 4;
+            const useRealtime = pingRealtimeCheckbox && pingRealtimeCheckbox.checked;
+            
+            clearResults();
             
             try {
-                const response = await makeRequest('/api/ping', { host, count });
-                
-                // 구조화된 데이터가 있으면 사용하고, 없으면 기존 방식으로 표시
-                if (response.parsedData) {
-                    const pingData = response.parsedData;
-                    // 핑 결과 포맷팅 - 한글 깨짐 문제 해결
-                    let resultHtml = `
-                        <div class="ping-results">
-                            <div class="ping-summary">
-                                <h6>Ping 요약:</h6>
-                                <div class="ping-summary-grid">
-                                    <div class="ping-stat">
-                                        <strong>전송: </strong>${pingData.sent}
-                                    </div>
-                                    <div class="ping-stat">
-                                        <strong>수신: </strong>${pingData.received}
-                                    </div>
-                                    <div class="ping-stat">
-                                        <strong>손실: </strong>${pingData.lost} (${pingData.lossRate})
-                                    </div>
-                                    <div class="ping-stat">
-                                        <strong>최소: </strong>${pingData.min}
-                                    </div>
-                                    <div class="ping-stat">
-                                        <strong>최대: </strong>${pingData.max}
-                                    </div>
-                                    <div class="ping-stat">
-                                        <strong>평균: </strong>${pingData.avg}
-                                    </div>
-                                </div>
-                            </div>
-                            <div class="ping-packets">
-                                <h6>패킷 상세:</h6>
-                                <div class="table-wrapper">
-                                    <table class="data-table">
-                                        <thead>
-                                            <tr>
-                                                <th>#</th>
-                                                <th>IP 주소</th>
-                                                <th>응답 시간</th>
-                                                <th>TTL</th>
-                                            </tr>
-                                        </thead>
-                                        <tbody>
-                    `;
-                    
-                    pingData.packets.forEach((packet, index) => {
-                        resultHtml += `
-                            <tr>
-                                <td>${index + 1}</td>
-                                <td>${packet.ip}</td>
-                                <td>${packet.time}</td>
-                                <td>${packet.ttl}</td>
-                            </tr>
-                        `;
-                    });
-                    
-                    resultHtml += `
-                                        </tbody>
-                                    </table>
-                                </div>
-                            </div>
-                            <details class="raw-details">
-                                <summary>원본 출력 보기</summary>
-                                <pre>${pingData.rawOutput}</pre>
-                            </details>
-                        </div>
-                    `;
-                    
-                    resultsContainer.innerHTML = resultHtml;
+                if (useRealtime) {
+                    // Execute command via WebSocket for real-time results
+                    const success = await executeRealtimeCommand('ping', { host, count });
+                    if (!success) {
+                        // Use API as fallback if WebSocket fails
+                        const result = await makeRequest('/ping', { host, count });
+                        displayResults(result.result);
+                    }
                 } else {
-                    // 기존 방식 (원본 출력)
-                    displayResults(response.result);
-                }
-            } catch (error) {
-                // API 요청 실패 시
-                console.error("API 요청 실패:", error);
-                displayResults(`API 요청 중 오류: ${error.message}`, true);
-            }
-            
-            setStatus('success');
-        } catch (error) {
-            displayResults(error.message, true);
-            setStatus('failed');
-        }
-    }
-    
-    // Traceroute test handler
-    document.getElementById('traceroute-submit').addEventListener('click', async function() {
-        const host = document.getElementById('traceroute-host').value.trim();
-        const useRealtime = document.getElementById('traceroute-realtime').checked;
-        
-        if (!host) {
-            displayResults('Please enter a host or IP address', true);
-            return;
-        }
-        
-        // 테스트 시작 전 결과 영역 초기화
-        clearResults();
-        
-        if (useRealtime) {
-            // Use WebSocket for real-time output
-            const success = await executeRealtimeCommand('traceroute', { host });
-            if (!success) {
-                // Fall back to regular request
-                resultsContainer.classList.remove('realtime-active');
-                try {
-                    const result = await makeRequest('traceroute', { host });
+                    // Standard API call
+                    const result = await makeRequest('/ping', { host, count });
                     displayResults(result.result);
-                } catch (error) {
-                    displayResults(error.message, true);
                 }
-            }
-        } else {
-            // Use regular request
-            try {
-                const result = await makeRequest('traceroute', { host });
-                displayResults(result.result);
             } catch (error) {
                 displayResults(error.message, true);
             }
-        }
-    });
+        });
+    }
     
-    // DNS Lookup handler
+    // Traceroute test handler
+    const tracerouteSubmitBtn = document.getElementById('traceroute-submit');
+    const tracerouteHostInput = document.getElementById('traceroute-host');
+    const tracerouteRealtimeCheckbox = document.getElementById('traceroute-realtime');
+    
+    if (tracerouteSubmitBtn) {
+        tracerouteSubmitBtn.addEventListener('click', async function() {
+            const host = tracerouteHostInput.value.trim();
+            if (!host) {
+                displayResults('Host is required', true);
+                return;
+            }
+            
+            const useRealtime = tracerouteRealtimeCheckbox && tracerouteRealtimeCheckbox.checked;
+            
+            clearResults();
+            
+            try {
+                if (useRealtime) {
+                    // Execute command via WebSocket for real-time results
+                    const success = await executeRealtimeCommand('traceroute', { host });
+                    if (!success) {
+                        // Use API as fallback if WebSocket fails
+                        const result = await makeRequest('/traceroute', { host });
+                        displayResults(result.result);
+                    }
+                } else {
+                    // Standard API call
+                    const result = await makeRequest('/traceroute', { host });
+                    displayResults(result.result);
+                }
+            } catch (error) {
+                displayResults(error.message, true);
+            }
+        });
+    }
+    
+    // DNS Lookup 테스트
     document.getElementById('nslookup-submit').addEventListener('click', async function() {
-        const host = document.getElementById('nslookup-host').value.trim();
+        const host = document.getElementById('nslookup-host').value;
         const type = document.getElementById('nslookup-type').value;
+        const dnsServer = document.getElementById('dns-server').value.trim();
         
         if (!host) {
-            displayResults('Please enter a domain name', true);
+            displayResults('Hostname is required', true);
             return;
         }
         
-        // 테스트 시작 전 결과 영역 초기화
+        // Clear results area before starting test
         clearResults();
         
+        setStatus('running');
+        console.log(`DNS Lookup request: host=${host}, type=${type}, dnsServer=${dnsServer || 'container default DNS'}`);
+        
         try {
-            const result = await makeRequest('nslookup', { host, type });
-            displayResults(result);
+            // 새로운 AbortController 생성
+            currentController = new AbortController();
+            
+            const response = await fetch('/api/nslookup', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json'
+                },
+                body: JSON.stringify({ 
+                    host: host, 
+                    type: type, 
+                    dnsServer: dnsServer 
+                }),
+                signal: currentController.signal
+            });
+            
+            // Request completed, reset controller
+            currentController = null;
+            
+            const data = await response.json();
+            console.log("DNS lookup response:", data);
+            
+            if (data.success) {
+                let resultHTML = `<h3>DNS Lookup Result: ${host}</h3>`;
+                
+                // Display DNS server information
+                resultHTML += `<div class="result-item"><strong>DNS Server:</strong> ${data.dnsServer || 'Default system DNS'}</div>`;
+                
+                resultHTML += `<div class="result-item"><strong>IP Address:</strong> ${data.ipAddress || 'N/A'}</div>`;
+                resultHTML += `<div class="result-item"><strong>IP Version:</strong> ${data.ipFamily || 'N/A'}</div>`;
+                
+                if (data.records && data.records.length > 0) {
+                    resultHTML += `<h4>DNS Records</h4>`;
+                    data.records.forEach(record => {
+                        resultHTML += `<div class="result-item">`;
+                        for (const [key, value] of Object.entries(record)) {
+                            if (typeof value === 'object') {
+                                resultHTML += `<div><strong>${key}:</strong> ${JSON.stringify(value)}</div>`;
+                            } else {
+                                resultHTML += `<div><strong>${key}:</strong> ${value}</div>`;
+                            }
+                        }
+                        resultHTML += `</div>`;
+                    });
+                } else {
+                    resultHTML += `<div class="result-item">No DNS records found or unable to retrieve.</div>`;
+                }
+                
+                // Add raw output - use JSON.stringify if it's an object
+                const rawOutput = typeof data.rawOutput === 'object' 
+                    ? JSON.stringify(data.rawOutput, null, 2) 
+                    : data.rawOutput || '';
+                
+                resultHTML += `<div class="raw-output"><h4>Raw Output</h4><pre>${rawOutput}</pre></div>`;
+                
+                displayResults(resultHTML, false);
+                setStatus('success');
+            } else {
+                displayResults(`DNS lookup failed: ${data.error || 'Unknown error'}`, true);
+                setStatus('failed');
+            }
         } catch (error) {
-            displayResults(error.message, true);
+            console.error("DNS lookup error:", error);
+            displayResults(`Request failed: ${error.message}`, true);
+            setStatus('failed');
         }
     });
     
-    // UDP 테스트 핸들러
+    // UDP test handler
     document.getElementById('udp-submit')?.addEventListener('click', async function() {
         const host = document.getElementById('udp-host').value.trim();
         const port = document.getElementById('udp-port').value.trim();
@@ -508,12 +590,12 @@ document.addEventListener('DOMContentLoaded', function() {
             return;
         }
         
-        // 테스트 시작 전 결과 영역 초기화
+        // Clear results area before starting test
         clearResults();
         
         try {
             setStatus('running');
-            const result = await makeRequest('udp', { 
+            const result = await makeRequest('/udp', { 
                 host, 
                 port: parseInt(port), 
                 data,
@@ -538,17 +620,17 @@ document.addEventListener('DOMContentLoaded', function() {
             return;
         }
         
-        // 테스트 시작 전 결과 영역 초기화
+        // Clear results area before starting test
         clearResults();
         
         try {
             setStatus('running');
-            const result = await makeRequest('tcp', { host, port: parseInt(port) });
+            const result = await makeRequest('/tcp', { host, port: parseInt(port) });
             
             if (result.success) {
-                displayResults(`✅ ${result.message || 'TCP 연결 성공!'}`, false);
+                displayResults(`✅ ${result.message || 'TCP connection successful!'}`, false);
             } else {
-                displayResults(`❌ ${result.error || 'TCP 연결 실패'}`, true);
+                displayResults(`❌ ${result.error || 'TCP connection failed'}`, true);
             }
             
             setStatus(result.success ? 'success' : 'failed');
@@ -558,7 +640,7 @@ document.addEventListener('DOMContentLoaded', function() {
         }
     });
     
-    // MySQL 테스트
+    // MySQL test
     document.getElementById('mysql-submit')?.addEventListener('click', function() {
         const host = document.getElementById('mysql-host').value;
         const port = document.getElementById('mysql-port').value;
@@ -568,22 +650,54 @@ document.addEventListener('DOMContentLoaded', function() {
         const query = document.getElementById('mysql-query').value;
 
         if (!host || !user) {
-            displayResult('Host와 Username은 필수 항목입니다.', 'error');
+            displayResults('Host and Username are required fields', true);
             return;
         }
 
-        // 결과 영역 초기화
+        // Clear results area
         clearResults();
         
-        // 쿼리가 있으면 쿼리 실행, 없으면 연결 테스트
+        // If query exists, run query, otherwise test connection
         if (query.trim()) {
-            makeRequest('/api/mysql/query', { host, port, user, password, database, query });
+            makeRequest('/mysql/query', { host, port, user, password, database, query })
+                .then(result => {
+                    if (result.success) {
+                        // Format results as table if possible
+                        if (result.data && Array.isArray(result.data)) {
+                            const tableHtml = formatAsTable(result.data);
+                            resultsContainer.innerHTML = `
+                                <div class="result-success">
+                                    <div>${result.message || 'Query executed successfully'}</div>
+                                    <div>Rows: ${result.rowCount || result.data.length}</div>
+                                    <div class="table-wrapper mt-3">${tableHtml}</div>
+                                </div>
+                            `;
+                        } else {
+                            displayResults(result);
+                        }
+                    } else {
+                        displayResults(result.error || 'Unknown error', true);
+                    }
+                })
+                .catch(error => {
+                    displayResults(error.message, true);
+                });
         } else {
-            makeRequest('/api/mysql', { host, port, user, password, database });
+            makeRequest('/mysql', { host, port, user, password, database })
+                .then(result => {
+                    if (result.success) {
+                        displayResults(`Connection successful to MySQL server at ${host}:${port || 3306}`);
+                    } else {
+                        displayResults(result.error || 'Connection failed', true);
+                    }
+                })
+                .catch(error => {
+                    displayResults(error.message, true);
+                });
         }
     });
 
-    // PostgreSQL 테스트
+    // PostgreSQL test
     document.getElementById('postgres-submit')?.addEventListener('click', function() {
         const host = document.getElementById('postgres-host').value;
         const port = document.getElementById('postgres-port').value;
@@ -593,22 +707,54 @@ document.addEventListener('DOMContentLoaded', function() {
         const query = document.getElementById('postgres-query').value;
 
         if (!host || !user || !database) {
-            displayResult('Host, Username, Database는 필수 항목입니다.', 'error');
+            displayResults('Host, Username, and Database are required fields', true);
             return;
         }
 
-        // 결과 영역 초기화
+        // Clear results area
         clearResults();
         
-        // 쿼리가 있으면 쿼리 실행, 없으면 연결 테스트
+        // If query exists, run query, otherwise test connection
         if (query.trim()) {
-            makeRequest('/api/postgres/query', { host, port, user, password, database, query });
+            makeRequest('/postgres/query', { host, port, user, password, database, query })
+                .then(result => {
+                    if (result.success) {
+                        // Format results as table if possible
+                        if (result.data && Array.isArray(result.data)) {
+                            const tableHtml = formatAsTable(result.data);
+                            resultsContainer.innerHTML = `
+                                <div class="result-success">
+                                    <div>${result.message || 'Query executed successfully'}</div>
+                                    <div>Rows: ${result.rowCount}</div>
+                                    <div class="table-wrapper mt-3">${tableHtml}</div>
+                                </div>
+                            `;
+                        } else {
+                            displayResults(result);
+                        }
+                    } else {
+                        displayResults(result.error || 'Unknown error', true);
+                    }
+                })
+                .catch(error => {
+                    displayResults(error.message, true);
+                });
         } else {
-            makeRequest('/api/postgres', { host, port, user, password, database });
+            makeRequest('/postgres', { host, port, user, password, database })
+                .then(result => {
+                    if (result.success) {
+                        displayResults(`Connection successful to PostgreSQL server at ${host}:${port || 5432}`);
+                    } else {
+                        displayResults(result.error || 'Connection failed', true);
+                    }
+                })
+                .catch(error => {
+                    displayResults(error.message, true);
+                });
         }
     });
 
-    // MongoDB 테스트
+    // MongoDB test
     document.getElementById('mongodb-submit')?.addEventListener('click', function() {
         const host = document.getElementById('mongodb-host').value;
         const port = document.getElementById('mongodb-port').value;
@@ -618,14 +764,14 @@ document.addEventListener('DOMContentLoaded', function() {
         const collection = document.getElementById('mongodb-collection').value;
         
         if (!host) {
-            displayResult('Host는 필수 항목입니다.', 'error');
+            displayResults('Host is a required field', true);
             return;
         }
         
-        // 결과 영역 초기화
+        // Clear results area
         clearResults();
 
-        // 컬렉션이 지정된 경우 쿼리 실행
+        // If collection is specified, run query
         if (collection.trim()) {
             const query = document.getElementById('mongodb-query').value;
             const projection = document.getElementById('mongodb-projection').value;
@@ -636,23 +782,55 @@ document.addEventListener('DOMContentLoaded', function() {
                 queryObj = query ? JSON.parse(query) : {};
                 projectionObj = projection ? JSON.parse(projection) : {};
             } catch (e) {
-                displayResult('JSON 형식이 올바르지 않습니다: ' + e.message, 'error');
+                displayResults('Invalid JSON format: ' + e.message, true);
                 return;
             }
 
-            makeRequest('/api/mongodb/query', { 
+            makeRequest('/mongodb/query', { 
                 host, port, user, password, database, collection, 
                 query: queryObj, 
                 projection: projectionObj, 
                 limit: parseInt(limit) 
-            });
+            })
+                .then(result => {
+                    if (result.success) {
+                        // Format results as table if possible
+                        if (result.data && Array.isArray(result.data)) {
+                            const tableHtml = formatAsTable(result.data);
+                            resultsContainer.innerHTML = `
+                                <div class="result-success">
+                                    <div>${result.message || 'Query executed successfully'}</div>
+                                    <div>Documents: ${result.count}</div>
+                                    <div class="table-wrapper mt-3">${tableHtml}</div>
+                                </div>
+                            `;
+                        } else {
+                            displayResults(result);
+                        }
+                    } else {
+                        displayResults(result.error || 'Unknown error', true);
+                    }
+                })
+                .catch(error => {
+                    displayResults(error.message, true);
+                });
         } else {
-            // 컬렉션이 지정되지 않은 경우 연결 테스트만 수행
-            makeRequest('/api/mongodb', { host, port, user, password, database });
+            // Only test connection if no collection specified
+            makeRequest('/mongodb', { host, port, user, password, database })
+                .then(result => {
+                    if (result.success) {
+                        displayResults(`Connection successful to MongoDB server at ${host}:${port || 27017}`);
+                    } else {
+                        displayResults(result.error || 'Connection failed', true);
+                    }
+                })
+                .catch(error => {
+                    displayResults(error.message, true);
+                });
         }
     });
     
-    // Redis 연결 테스트
+    // Redis connection test
     document.getElementById('redis-submit')?.addEventListener('click', function() {
         const host = document.getElementById('redis-host').value;
         const port = document.getElementById('redis-port').value;
@@ -660,14 +838,24 @@ document.addEventListener('DOMContentLoaded', function() {
         const db = document.getElementById('redis-db').value;
         
         if (!host) {
-            displayResult('Host는 필수 항목입니다.', 'error');
+            displayResults('Host is a required field', true);
             return;
         }
         
-        // 결과 영역 초기화
+        // Clear results area
         clearResults();
 
-        makeRequest('/api/redis', { host, port, password, db });
+        makeRequest('/redis', { host, port, password, db })
+            .then(result => {
+                if (result.success) {
+                    displayResults(`Connection successful to Redis server at ${host}:${port || 6379}`);
+                } else {
+                    displayResults(result.error || 'Connection failed', true);
+                }
+            })
+            .catch(error => {
+                displayResults(error.message, true);
+            });
     });
     
     // RabbitMQ test handler
@@ -684,7 +872,7 @@ document.addEventListener('DOMContentLoaded', function() {
         }
         
         try {
-            const result = await makeRequest('rabbitmq', { host, port, user, password, vhost });
+            const result = await makeRequest('/rabbitmq', { host, port, user, password, vhost });
             displayResults(result);
         } catch (error) {
             displayResults(error.message, true);
@@ -702,7 +890,7 @@ document.addEventListener('DOMContentLoaded', function() {
         }
         
         try {
-            const result = await makeRequest('/api/ssl', { host, port });
+            const result = await makeRequest('/ssl', { host, port });
             displayResults(result.result);
         } catch (error) {
             displayResults(error.message, true);
@@ -750,39 +938,42 @@ document.addEventListener('DOMContentLoaded', function() {
         return parseFloat((bytes / Math.pow(k, i)).toFixed(dm)) + ' ' + sizes[i];
     }
 
-    // 사이드바 메뉴 아이템 클릭 이벤트
-    const sidebarItems = document.querySelectorAll('.sidebar-menu li');
+    // Sidebar menu item click event
+    const sidebarItems = document.querySelectorAll('.sidebar-menu li, .menu-item');
     sidebarItems.forEach(item => {
         item.addEventListener('click', function() {
-            // 모든 테스트 폼 숨기기
-            const allForms = document.querySelectorAll('.test-form');
-            allForms.forEach(form => form.classList.add('hidden'));
-
-            // 선택한 메뉴 아이템의 데이터 속성에서 폼 ID 가져오기
+            // Get form ID from data attribute
             const testType = this.getAttribute('data-test');
             
-            // 해당 테스트 폼이 존재하는지 확인
+            // Always clear results when changing tests
+            clearResults();
+            
+            // Cancel any ongoing tests
+            cancelCurrentTest();
+            
+            // Update active test type
+            activeTestType = testType;
+            
+            // Hide all test forms
+            const allForms = document.querySelectorAll('.test-form');
+            allForms.forEach(form => form.classList.add('hidden'));
+            
+            // Check if test form exists
             const testForm = document.getElementById(`${testType}-form`);
             if (testForm) {
                 testForm.classList.remove('hidden');
-                // 현재 활성화된 메뉴 아이템 스타일 갱신
+                // Update active menu item style
                 sidebarItems.forEach(item => item.classList.remove('active'));
                 this.classList.add('active');
+                
+                // Reset status
+                setStatus('ready');
             } else {
-                console.error(`폼을 찾을 수 없음: ${testType}-form`);
-                displayResult(`테스트 유형 "${testType}"에 대한 폼을 찾을 수 없습니다.`, 'error');
+                console.error(`Form not found: ${testType}-form`);
+                displayResults(`Test form for "${testType}" was not found.`, true);
             }
         });
     });
-
-    // WebSocket용 result 표시 함수
-    function displayResult(message, type = 'success') {
-        if (type === 'error') {
-            resultsContainer.innerHTML = `<div class="result-error">Error: ${message}</div>`;
-        } else {
-            resultsContainer.innerHTML = `<div class="result-success">${message}</div>`;
-        }
-    }
 
     // HTTP API test handler
     document.getElementById('http-submit').addEventListener('click', async function() {
@@ -795,6 +986,9 @@ document.addEventListener('DOMContentLoaded', function() {
             displayResults('URL is required', true);
             return;
         }
+        
+        // Clear results area
+        clearResults();
         
         try {
             // Parse JSON if provided
@@ -816,13 +1010,13 @@ document.addEventListener('DOMContentLoaded', function() {
                 }
             }
             
-            const result = await makeRequest('/api/http', { url, method, headers, data });
+            const result = await makeRequest('/http', { url, method, headers, data });
             displayResults(result);
         } catch (error) {
             displayResults(error.message, true);
         }
     });
-    
+
     // WebSocket test handlers
     const wsConnectBtn = document.getElementById('websocket-connect');
     const wsDisconnectBtn = document.getElementById('websocket-disconnect');
@@ -841,13 +1035,15 @@ document.addEventListener('DOMContentLoaded', function() {
         try {
             webSocket = new WebSocket(url);
             
+            // Show cancel button
+            cancelButton.style.display = 'inline-block';
+            
             webSocket.onopen = function() {
                 if (wsConnectBtn) wsConnectBtn.classList.add('hidden');
                 if (wsDisconnectBtn) wsDisconnectBtn.classList.remove('hidden');
                 if (wsMessagePanel) wsMessagePanel.classList.remove('hidden');
                 
-                // 연결 성공 메시지를 결과 영역에 표시
-                displayResults("✅ WebSocket 서버에 연결되었습니다", false);
+                displayResults("✅ Connected to WebSocket server", false);
                 
                 if (wsMessagesContainer) {
                     wsMessagesContainer.innerHTML = '<div class="message-success">Connected to WebSocket server</div>';
@@ -856,8 +1052,7 @@ document.addEventListener('DOMContentLoaded', function() {
             };
             
             webSocket.onmessage = function(event) {
-                // 웹소켓 메시지를 결과 영역에도 표시
-                displayResults("📩 메시지 수신: " + event.data, false);
+                displayResults("📩 Message received: " + event.data, false);
                 
                 if (wsMessagesContainer) {
                     displayWebSocketMessage(wsMessagesContainer, event.data);
@@ -869,8 +1064,10 @@ document.addEventListener('DOMContentLoaded', function() {
                 if (wsDisconnectBtn) wsDisconnectBtn.classList.add('hidden');
                 if (wsMessagePanel) wsMessagePanel.classList.add('hidden');
                 
-                // 연결 종료 메시지를 결과 영역에 표시
-                displayResults("🔌 WebSocket 연결이 종료되었습니다", false);
+                // Hide cancel button
+                cancelButton.style.display = 'none';
+                
+                displayResults("🔌 WebSocket connection closed", false);
                 
                 if (wsMessagesContainer) {
                     displayWebSocketMessage(wsMessagesContainer, 'Connection closed');
@@ -880,13 +1077,19 @@ document.addEventListener('DOMContentLoaded', function() {
             };
             
             webSocket.onerror = function(error) {
+                // Hide cancel button
+                cancelButton.style.display = 'none';
+                
                 if (wsMessagesContainer) {
                     displayWebSocketMessage(wsMessagesContainer, `Error: ${error.message || 'Unknown error'}`);
                 }
-                displayResults(`❌ WebSocket 오류: ${error.message || 'Unknown error'}`, true);
+                displayResults(`❌ WebSocket error: ${error.message || 'Unknown error'}`, true);
                 setStatus('failed');
             };
         } catch (error) {
+            // Hide cancel button
+            cancelButton.style.display = 'none';
+            
             displayResults(error.message, true);
             setStatus('failed');
         }
@@ -919,7 +1122,7 @@ document.addEventListener('DOMContentLoaded', function() {
     if (wsSendBtn) {
         wsSendBtn.addEventListener('click', function() {
             if (!webSocket) {
-                displayResults('WebSocket 서버에 연결되지 않았습니다.', true);
+                displayResults('Not connected to WebSocket server.', true);
                 return;
             }
             
@@ -930,7 +1133,7 @@ document.addEventListener('DOMContentLoaded', function() {
             
             if (message) {
                 webSocket.send(message);
-                displayResults(`📤 메시지 전송: ${message}`, false);
+                displayResults(`📤 Message sent: ${message}`, false);
                 
                 if (wsMessagesContainer) {
                     displayWebSocketMessage(wsMessagesContainer, message, true);
@@ -954,10 +1157,524 @@ document.addEventListener('DOMContentLoaded', function() {
             // 연결 시작 상태로 설정
             setStatus('running');
             clearResults();
-            displayResults("🔄 Echo 서버에 연결 중...", false);
+            displayResults("🔄 Connecting to Echo server...", false);
             
             // WebSocket 연결 설정
             setupWebSocket(echoUrl);
         });
+    }
+
+    // 취소 버튼 이벤트 리스너 설정
+    document.getElementById('cancel-test').addEventListener('click', () => {
+        cancelCurrentTest();
+    });
+
+    // curl 테스트 이벤트 리스너
+    const curlForm = document.getElementById('curl-form');
+    const curlUrlInput = document.getElementById('curl-url');
+    const curlMethodSelect = document.getElementById('curl-method');
+    const curlHeadersInput = document.getElementById('curl-headers');
+    const curlDataInput = document.getElementById('curl-data');
+    const curlOptionsInput = document.getElementById('curl-options');
+    const curlSubmitBtn = document.getElementById('curl-submit');
+    
+    if (curlForm && curlSubmitBtn) {
+        curlSubmitBtn.addEventListener('click', async function() {
+            const url = curlUrlInput.value.trim();
+            if (!url) {
+                displayResults('URL is required', true);
+                return;
+            }
+            
+            try {
+                // 헤더 JSON 파싱
+                let headers = {};
+                if (curlHeadersInput.value.trim()) {
+                    try {
+                        headers = JSON.parse(curlHeadersInput.value);
+                    } catch (e) {
+                        displayResults('Invalid JSON format for headers', true);
+                        return;
+                    }
+                }
+                
+                // 요청 데이터 준비
+                let data = curlDataInput.value.trim();
+                if (data) {
+                    try {
+                        // Try parsing as JSON
+                        data = JSON.parse(data);
+                    } catch (e) {
+                        // Use as-is if parsing fails
+                        console.log('Body is not JSON, using as-is');
+                    }
+                }
+                
+                const options = curlOptionsInput.value.trim();
+                
+                clearResults();
+                displayResults('Executing curl command...');
+                
+                // curl execution request
+                const response = await fetch(`${API_BASE_URL}/curl`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        url: url,
+                        method: curlMethodSelect.value,
+                        headers: headers,
+                        data: data || null,
+                        options: options
+                    })
+                });
+                
+                const result = await response.json();
+                
+                if (result.success) {
+                    let output = '';
+                    
+                    // Display executed command
+                    output += `<div class="curl-command">$ ${result.command}</div>`;
+                    
+                    // Display stderr if available (usually for verbose info)
+                    if (result.stderr) {
+                        output += `<div class="curl-stderr"><pre>${escapeHTML(result.stderr)}</pre></div>`;
+                    }
+                    
+                    // stdout output
+                    if (result.stdout) {
+                        output += `<div class="curl-stdout"><pre>${escapeHTML(result.stdout)}</pre></div>`;
+                    }
+                    
+                    displayResults(output);
+                } else {
+                    displayResults(result.error || 'Unknown error executing curl command', true);
+                }
+            } catch (error) {
+                displayResults(error.message || 'Error executing curl command', true);
+                console.error('Curl execution error:', error);
+            }
+        });
+    }
+    
+    // displayResult 함수가 없는 경우 displayResults를 사용하도록 정의
+    function displayResult(content, isError = false) {
+        displayResults(content, isError);
+    }
+
+    // HTML 이스케이프 헬퍼 함수
+    function escapeHTML(text) {
+        return text
+            .replace(/&/g, '&amp;')
+            .replace(/</g, '&lt;')
+            .replace(/>/g, '&gt;')
+            .replace(/"/g, '&quot;')
+            .replace(/'/g, '&#039;');
+    }
+
+    // 모든 테스트 폼 숨기고 결과 초기화
+    function hideAllForms() {
+        document.querySelectorAll('.test-form').forEach(form => {
+            form.classList.add('hidden');
+        });
+        clearResults();
+    }
+
+    // 테스트 메뉴 이벤트 리스너
+    document.querySelectorAll('.menu-item').forEach(menuItem => {
+        menuItem.addEventListener('click', function() {
+            // 이전 선택 활성화 제거
+            document.querySelectorAll('.menu-item').forEach(item => {
+                item.classList.remove('active');
+            });
+            
+            // 현재 메뉴 활성화
+            this.classList.add('active');
+            
+            // 전체 폼 숨기기
+            hideAllForms();
+            
+            // 선택한 테스트 폼 표시
+            const testType = this.getAttribute('data-test');
+            const formElement = document.getElementById(`${testType}-form`);
+            if (formElement) {
+                formElement.classList.remove('hidden');
+            }
+            
+            // 타이틀 업데이트
+            updateTestTitle(this.textContent.trim());
+        });
+    });
+
+    // Tab 기능 구현
+    document.querySelectorAll('.tab-button').forEach(button => {
+        button.addEventListener('click', function() {
+            const tabId = this.getAttribute('data-tab');
+            const tabContainer = this.closest('.tabs').parentElement;
+            
+            // 탭 버튼 활성화 상태 업데이트
+            tabContainer.querySelectorAll('.tab-button').forEach(btn => {
+                btn.classList.remove('active');
+            });
+            this.classList.add('active');
+            
+            // 탭 콘텐츠 표시/숨김 처리
+            tabContainer.querySelectorAll('.tab-content').forEach(content => {
+                content.classList.add('hidden');
+            });
+            document.getElementById(`${tabId}-tab`).classList.remove('hidden');
+        });
+    });
+
+    // k8s Service DNS test
+    document.getElementById('k8s-nslookup-submit').addEventListener('click', async function() {
+        const serviceName = document.getElementById('k8s-service-name').value;
+        const namespace = document.getElementById('k8s-namespace').value;
+        const clusterDomain = document.getElementById('k8s-cluster-domain').value;
+        const dnsServer = document.getElementById('k8s-dns-server').value;
+        
+        if (!serviceName) {
+            displayResults('Service name is required.', true);
+            return;
+        }
+        
+        // FQDN construction
+        const fqdn = `${serviceName}.${namespace}.svc.${clusterDomain}`;
+        setStatus('running');
+        clearResults();
+        
+        try {
+            const response = await fetch('/api/nslookup', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json'
+                },
+                body: JSON.stringify({ 
+                    host: fqdn, 
+                    type: 'A',
+                    dnsServer: dnsServer // Add DNS server
+                })
+            });
+            
+            const data = await response.json();
+            
+            if (response.ok) {
+                let resultHTML = `<h3>DNS Lookup Result: ${fqdn}</h3>`;
+                resultHTML += `<div class="result-item"><strong>IP Address:</strong> ${data.ipAddress || 'N/A'}</div>`;
+                resultHTML += `<div class="result-item"><strong>IP Version:</strong> ${data.ipFamily || 'N/A'}</div>`;
+                resultHTML += `<div class="result-item"><strong>DNS Server:</strong> ${data.dnsServer || 'Default system DNS'}</div>`;
+                
+                if (data.records && data.records.length > 0) {
+                    resultHTML += `<h4>DNS Records</h4>`;
+                    data.records.forEach(record => {
+                        resultHTML += `<div class="result-item">`;
+                        for (const [key, value] of Object.entries(record)) {
+                            resultHTML += `<div><strong>${key}:</strong> ${typeof value === 'object' ? JSON.stringify(value) : value}</div>`;
+                        }
+                        resultHTML += `</div>`;
+                    });
+                } else {
+                    resultHTML += `<div class="result-item">No DNS records found or unable to retrieve.</div>`;
+                }
+                
+                displayResults(resultHTML);
+                setStatus('success');
+            } else {
+                displayResults(`DNS lookup failed: ${data.error || 'Unknown error'}`, true);
+                setStatus('failed');
+            }
+        } catch (error) {
+            displayResults(`Request failed: ${error.message}`, true);
+            setStatus('failed');
+        }
+    });
+
+    // k8s service connection test
+    document.getElementById('k8s-conn-submit').addEventListener('click', async function() {
+        const serviceName = document.getElementById('k8s-service-name').value;
+        const namespace = document.getElementById('k8s-namespace').value;
+        const clusterDomain = document.getElementById('k8s-cluster-domain').value;
+        const port = document.getElementById('k8s-port').value;
+        const protocol = document.getElementById('k8s-protocol').value;
+        const dnsServer = document.getElementById('k8s-dns-server').value;
+        
+        if (!serviceName || !port) {
+            displayResults('Service name and port are required.', true);
+            return;
+        }
+        
+        // FQDN construction
+        const fqdn = `${serviceName}.${namespace}.svc.${clusterDomain}`;
+        setStatus('running');
+        clearResults();
+        
+        try {
+            // First lookup IP via DNS
+            if (dnsServer) {
+                setStatus('running');
+                try {
+                    const dnsResponse = await fetch('/api/nslookup', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ host: fqdn, type: 'A', dnsServer: dnsServer })
+                    });
+                    
+                    const dnsData = await dnsResponse.json();
+                    if (dnsResponse.ok && dnsData.ipAddress) {
+                        displayResults(`Resolved ${fqdn} to ${dnsData.ipAddress}. Connecting...`);
+                    }
+                } catch (error) {
+                    console.error('DNS lookup error:', error);
+                    // Continue even if DNS lookup fails (will use system DNS)
+                }
+            }
+            
+            let response;
+            if (protocol === 'TCP') {
+                response = await fetch('/api/tcp', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json'
+                    },
+                    body: JSON.stringify({ host: fqdn, port: parseInt(port) })
+                });
+            } else { // UDP
+                response = await fetch('/api/udp', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json'
+                    },
+                    body: JSON.stringify({ host: fqdn, port: parseInt(port) })
+                });
+            }
+            
+            const data = await response.json();
+            
+            if (data.success) {
+                let resultHTML = `<h3>${protocol} Connection Test Result: ${fqdn}:${port}</h3>`;
+                resultHTML += `<div class="result-item success"><strong>Status:</strong> Connection successful</div>`;
+                if (data.result) {
+                    resultHTML += `<div class="result-item"><strong>Details:</strong> ${data.result}</div>`;
+                }
+                if (data.response) {
+                    resultHTML += `<div class="result-item"><strong>Response:</strong> ${data.response}</div>`;
+                }
+                displayResults(resultHTML);
+                setStatus('success');
+            } else {
+                displayResults(`Connection failed: ${data.error || 'Unknown error'}`, true);
+                setStatus('failed');
+            }
+        } catch (error) {
+            displayResults(`Request failed: ${error.message}`, true);
+            setStatus('failed');
+        }
+    });
+
+    // k8s Pod communication test
+    document.getElementById('k8s-pod-conn-submit').addEventListener('click', async function() {
+        const podIP = document.getElementById('k8s-pod-ip').value;
+        const port = document.getElementById('k8s-pod-port').value;
+        const protocol = document.getElementById('k8s-pod-protocol').value;
+        const dnsServer = document.getElementById('k8s-pod-dns-server').value;
+        
+        if (!podIP || !port) {
+            displayResults('Pod IP and port are required.', true);
+            return;
+        }
+        
+        setStatus('running');
+        clearResults();
+        
+        try {
+            // DNS server related message (IP address but can be used for reverse lookups)
+            if (dnsServer) {
+                displayResults(`Using DNS server ${dnsServer} for reverse lookups...`);
+            }
+            
+            let response;
+            if (protocol === 'TCP') {
+                response = await fetch('/api/tcp', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json'
+                    },
+                    body: JSON.stringify({ host: podIP, port: parseInt(port) })
+                });
+            } else { // UDP
+                response = await fetch('/api/udp', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json'
+                    },
+                    body: JSON.stringify({ host: podIP, port: parseInt(port) })
+                });
+            }
+            
+            const data = await response.json();
+            
+            if (data.success) {
+                let resultHTML = `<h3>${protocol} Pod Communication Test Result: ${podIP}:${port}</h3>`;
+                resultHTML += `<div class="result-item success"><strong>Status:</strong> Connection successful</div>`;
+                if (data.result) {
+                    resultHTML += `<div class="result-item"><strong>Details:</strong> ${data.result}</div>`;
+                }
+                displayResults(resultHTML);
+                setStatus('success');
+            } else {
+                displayResults(`Connection failed: ${data.error || 'Unknown error'}`, true);
+                setStatus('failed');
+            }
+        } catch (error) {
+            displayResults(`Request failed: ${error.message}`, true);
+            setStatus('failed');
+        }
+    });
+
+    // k8s DB connection test
+    document.getElementById('k8s-db-submit').addEventListener('click', async function() {
+        const dbType = document.getElementById('k8s-db-type').value;
+        const service = document.getElementById('k8s-db-service').value;
+        const port = document.getElementById('k8s-db-port').value;
+        const user = document.getElementById('k8s-db-user').value;
+        const password = document.getElementById('k8s-db-password').value;
+        const dbName = document.getElementById('k8s-db-name').value;
+        const query = document.getElementById('k8s-db-query').value;
+        const dnsServer = document.getElementById('k8s-db-dns-server').value;
+        
+        if (!service) {
+            displayResults('Service name is required.', true);
+            return;
+        }
+        
+        setStatus('running');
+        clearResults();
+        
+        // Perform DNS lookup first if DNS server is specified
+        if (dnsServer) {
+            try {
+                const dnsResponse = await fetch('/api/nslookup', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ host: service, type: 'A', dnsServer: dnsServer })
+                });
+                
+                const dnsData = await dnsResponse.json();
+                if (dnsResponse.ok && dnsData.ipAddress) {
+                    displayResults(`Resolved ${service} to ${dnsData.ipAddress}. Connecting to database...`);
+                }
+            } catch (error) {
+                console.error('DNS lookup error:', error);
+                // Continue even if DNS lookup fails
+            }
+        }
+        
+        let endpoint = `/api/${dbType}`;
+        let payload = {
+            host: service,
+            port: parseInt(port) || getDefaultPort(dbType),
+            user,
+            password,
+            database: dbName
+        };
+        
+        // 쿼리가 있는 경우 쿼리 API 사용
+        if (query && ['mysql', 'postgres', 'mongodb'].includes(dbType)) {
+            endpoint += '/query';
+            payload.query = query;
+        }
+        
+        try {
+            const response = await fetch(endpoint, {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json'
+                },
+                body: JSON.stringify(payload)
+            });
+            
+            const data = await response.json();
+            
+            if (data.success) {
+                let resultHTML = `<h3>${dbType} Connection Test Result</h3>`;
+                resultHTML += `<div class="result-item success"><strong>Status:</strong> Connection successful</div>`;
+                
+                if (data.message) {
+                    resultHTML += `<div class="result-item"><strong>Message:</strong> ${data.message}</div>`;
+                }
+                
+                if (query && data.data) {
+                    resultHTML += `<h4>Query Result</h4>`;
+                    
+                    if (Array.isArray(data.data) && data.data.length > 0) {
+                        // 테이블 형식으로 표시
+                        resultHTML += createTableFromData(data.data);
+                    } else {
+                        resultHTML += `<div class="result-item"><pre>${JSON.stringify(data.data, null, 2)}</pre></div>`;
+                    }
+                }
+                
+                displayResults(resultHTML);
+                setStatus('success');
+            } else {
+                displayResults(`Connection failed: ${data.error || 'Unknown error'}`, true);
+                setStatus('failed');
+            }
+        } catch (error) {
+            displayResults(`Request failed: ${error.message}`, true);
+            setStatus('failed');
+        }
+    });
+
+    // DB 타입별 기본 포트 반환
+    function getDefaultPort(dbType) {
+        switch(dbType) {
+            case 'mysql':
+                return 3306;
+            case 'postgres':
+                return 5432;
+            case 'mongodb':
+                return 27017;
+            case 'redis':
+                return 6379;
+            default:
+                return 0;
+        }
+    }
+
+    // 데이터로부터 HTML 테이블을 생성하는 함수
+    function createTableFromData(data) {
+        if (!Array.isArray(data) || data.length === 0) {
+            return '<div class="result-item">No data available</div>';
+        }
+        
+        let html = `<div class="table-responsive"><table class="result-table">`;
+        
+        // Table header
+        html += '<thead><tr>';
+        const headers = Object.keys(data[0]);
+        headers.forEach(header => {
+            html += `<th>${header}</th>`;
+        });
+        html += '</tr></thead>';
+        
+        // Table content
+        html += '<tbody>';
+        data.forEach(row => {
+            html += '<tr>';
+            Object.values(row).forEach(value => {
+                if (value === null) {
+                    html += '<td>null</td>';
+                } else if (typeof value === 'object') {
+                    html += `<td>${JSON.stringify(value)}</td>`;
+                } else {
+                    html += `<td>${value}</td>`;
+                }
+            });
+            html += '</tr>';
+        });
+        html += '</tbody></table></div>';
+        
+        return html;
     }
 }); 

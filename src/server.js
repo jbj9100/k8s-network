@@ -17,15 +17,30 @@ const { promisify } = require('util');
 const amqp = require('amqplib');
 const fs = require('fs').promises;
 const os = require('os');
+const { spawn } = require('child_process');
 
 const app = express();
-const port = process.env.PORT || 3000;
+let port = process.env.PORT || 3000;
+
+// 명령줄 인수에서 포트 지정 확인 (--port=XXXX)
+process.argv.forEach((arg) => {
+  if (arg.startsWith('--port=')) {
+    const portArg = parseInt(arg.split('=')[1]);
+    if (!isNaN(portArg)) {
+      console.log(`Port specified via command line: ${portArg}`);
+      port = portArg;
+    }
+  }
+});
 
 // Create HTTP server
 const server = http.createServer(app);
 
-// Create WebSocket server
-const wss = new WebSocket.Server({ server });
+// Create WebSocket server with /ws path
+const wss = new WebSocket.Server({ 
+    server: server,
+    path: '/ws'
+});
 
 // Middleware
 app.use(cors());
@@ -140,60 +155,192 @@ app.post('/api/traceroute', (req, res) => {
 });
 
 // DNS Lookup Test
-app.post('/api/nslookup', (req, res) => {
-  const { host, type } = req.body;
-  
-  if (!host) {
-    return res.status(400).json({ error: 'Host is required' });
-  }
-
-  dns.lookup(host, (err, address, family) => {
-    if (err) {
-      return res.status(500).json({ error: err.message });
+app.post('/api/nslookup', async (req, res) => {
+    const { host, type, dnsServer } = req.body;
+    
+    if (!host) {
+        return res.status(400).json({ success: false, error: 'Host is required' });
     }
-
-    // If specified record type, use it
-    if (type && type !== 'ANY') {
-      const method = `resolve${type}`;
-      if (typeof dns[method] !== 'function') {
-        return res.status(400).json({ error: `Invalid DNS record type: ${type}` });
-      }
-      
-      dns[method](host, (err, records) => {
-        if (err) {
-          return res.json({ 
-            ipAddress: address, 
-            ipFamily: `IPv${family}`,
-            records: []
-          });
+    
+    try {
+        // DNS 서버가 지정되지 않은 경우 /etc/resolv.conf에서 읽기
+        let useDnsServer = dnsServer;
+        if (!useDnsServer) {
+            try {
+                // Windows에서는 /etc/resolv.conf가 없으므로 에러를 무시합니다
+                if (process.platform !== 'win32') {
+                    // /etc/resolv.conf 파일 읽기
+                    const resolveConf = await fs.readFile('/etc/resolv.conf', 'utf8');
+                    const nameserverMatch = resolveConf.match(/nameserver\s+([^\s]+)/);
+                    if (nameserverMatch && nameserverMatch[1]) {
+                        useDnsServer = nameserverMatch[1];
+                        console.log(`Using nameserver from /etc/resolv.conf: ${useDnsServer}`);
+                    }
+                }
+            } catch (error) {
+                console.error(`Failed to read /etc/resolv.conf: ${error.message}`);
+                // 기본 시스템 DNS 사용
+            }
         }
         
-        res.json({ 
-          ipAddress: address, 
-          ipFamily: `IPv${family}`,
-          recordType: type,
-          records 
-        });
-      });
-    } else {
-      // Otherwise resolve all record types
-      dns.resolveAny(host, (err, records) => {
-        if (err) {
-          return res.json({ 
-            ipAddress: address, 
-            ipFamily: `IPv${family}`,
-            records: []
-          });
+        let command = '';
+        const os = require('os').platform();
+        
+        // 타입이 'ANY'일 경우 특별 처리
+        const recordType = (type === 'ANY') ? 'A' : (type || 'A');
+        
+        if (os === 'win32') {
+            command = `nslookup -type=${recordType} ${host}`;
+            if (useDnsServer) {
+                command = `nslookup -type=${recordType} ${host} ${useDnsServer}`;
+            }
+        } else {
+            if (useDnsServer) {
+                command = `nslookup -type=${recordType} ${host} ${useDnsServer}`;
+            } else {
+                command = `nslookup -type=${recordType} ${host}`;
+            }
         }
         
-        res.json({ 
-          ipAddress: address, 
-          ipFamily: `IPv${family}`,
-          records 
+        console.log(`Executing DNS lookup: ${command}`);
+        
+        // exec 함수는 promise를 반환하므로 await로 결과를 받음
+        const execPromise = require('util').promisify(require('child_process').exec);
+        const { stdout, stderr } = await execPromise(command);
+        
+        // 디버깅을 위해 출력 로깅
+        console.log('nslookup stdout:', stdout);
+        console.log('nslookup stderr:', stderr);
+        
+        let ipAddress = '';
+        let ipFamily = '';
+        let records = [];
+        
+        // IP 주소 추출 (정규식 사용)
+        const ipv4Regex = /Address:\s*(\d+\.\d+\.\d+\.\d+)/g;
+        let ipv4Match;
+        let ipv4Matches = [];
+        
+        while ((ipv4Match = ipv4Regex.exec(stdout)) !== null) {
+            ipv4Matches.push(ipv4Match[1]);
+        }
+        
+        // Windows에서 nslookup의 출력 형식이 다를 수 있어 특별히 처리
+        if (os === 'win32') {
+            // 응답 파싱
+            const lines = stdout.split('\n');
+            let currentRecord = null;
+            
+            for (let i = 0; i < lines.length; i++) {
+                const line = lines[i].trim();
+                
+                // 서버 정보 라인은 건너뜀
+                if (line.includes('Server:') || line.includes('Address:') && i < 3) {
+                    continue;
+                }
+                
+                // 이름 정보 (일반적으로 응답 시작)
+                if (line.includes('Name:')) {
+                    currentRecord = { type: recordType };
+                    records.push(currentRecord);
+                    continue;
+                }
+                
+                // 주소 정보를 찾아서 파싱
+                if (line.match(/^Address/) && currentRecord) {
+                    const addrMatch = line.match(/Address:\s*(\S+)/);
+                    if (addrMatch && addrMatch[1]) {
+                        currentRecord.address = addrMatch[1];
+                        // 첫 번째 IP 주소를 기본 IP 주소로 설정
+                        if (!ipAddress) {
+                            ipAddress = addrMatch[1];
+                            // IPv4 또는 IPv6 확인
+                            ipFamily = addrMatch[1].includes(':') ? 'IPv6' : 'IPv4';
+                        }
+                    }
+                    continue;
+                }
+                
+                // 다른 유형의 레코드 정보 (MX, NS 등)
+                if (line.includes('mail exchanger')) {
+                    const mxMatch = line.match(/mail exchanger = (\d+) (.+)\.$/);
+                    if (mxMatch && currentRecord) {
+                        currentRecord.preference = mxMatch[1];
+                        currentRecord.exchange = mxMatch[2];
+                    }
+                } else if (line.includes('nameserver')) {
+                    const nsMatch = line.match(/nameserver = (.+)\.$/);
+                    if (nsMatch && currentRecord) {
+                        currentRecord.nameserver = nsMatch[1];
+                    }
+                } else if (line.includes('text')) {
+                    const txtMatch = line.match(/text = "(.+)"$/);
+                    if (txtMatch && currentRecord) {
+                        currentRecord.text = txtMatch[1];
+                    }
+                }
+            }
+        } else {
+            // 리눅스/macOS용 기존 파싱 로직
+            if (ipv4Matches.length > 1) {
+                // 첫 번째는 DNS 서버 주소일 수 있으므로 두 번째 사용
+                ipAddress = ipv4Matches[1];
+                ipFamily = 'IPv4';
+                
+                // 간단한 A 레코드 추가
+                records.push({
+                    type: recordType,
+                    address: ipAddress
+                });
+            }
+            
+            // IPv6 주소 확인
+            if (!ipAddress) {
+                const ipv6Regex = /Address:\s*([0-9a-f:]+)/gi;
+                let ipv6Match = ipv6Regex.exec(stdout);
+                if (ipv6Match) {
+                    ipAddress = ipv6Match[1];
+                    ipFamily = 'IPv6';
+                    
+                    // 간단한 AAAA 레코드 추가
+                    records.push({
+                        type: 'AAAA',
+                        address: ipAddress
+                    });
+                }
+            }
+        }
+        
+        // 기본 IP 주소 확인
+        if (!ipAddress && ipv4Matches.length > 0) {
+            ipAddress = ipv4Matches[0];
+            ipFamily = 'IPv4';
+        }
+        
+        // 레코드가 없으면 기본 레코드 추가
+        if (records.length === 0 && ipAddress) {
+            records.push({
+                type: recordType,
+                address: ipAddress
+            });
+        }
+        
+        return res.json({
+            success: true,
+            ipAddress: ipAddress,
+            ipFamily: ipFamily,
+            records: records,
+            rawOutput: stdout,
+            dnsServer: useDnsServer || 'Default system DNS'
         });
-      });
+    } catch (error) {
+        console.error('DNS lookup error:', error);
+        return res.status(500).json({
+            success: false,
+            error: error.message,
+            rawOutput: error.stderr || error.message
+        });
     }
-  });
 });
 
 // MySQL DB Connection Test
@@ -495,7 +642,7 @@ app.post('/api/tcp', (req, res) => {
   socket.on('connect', () => {
     res.json({ 
       success: true, 
-      message: `TCP 포트 ${port}에 성공적으로 연결되었습니다 (${host})` 
+      message: `Successfully connected to TCP port ${port} (${host})` 
     });
     socket.destroy();
   });
@@ -503,7 +650,7 @@ app.post('/api/tcp', (req, res) => {
   socket.on('timeout', () => {
     res.status(500).json({ 
       success: false, 
-      error: `${host}:${port}에 대한 연결이 ${timeout}ms 후 시간 초과되었습니다` 
+      error: `Connection to ${host}:${port} timed out after ${timeout}ms` 
     });
     socket.destroy();
   });
@@ -511,7 +658,7 @@ app.post('/api/tcp', (req, res) => {
   socket.on('error', (error) => {
     res.status(500).json({ 
       success: false, 
-      error: `TCP 연결 실패: ${error.message}` 
+      error: `TCP connection failed: ${error.message}` 
     });
     socket.destroy();
   });
@@ -682,33 +829,193 @@ app.get('/api/sysinfo', async (req, res) => {
   }
 });
 
-// SSL/TLS Certificate Info
+// SSL/TLS Certificate Info (using built-in Node.js TLS module)
 app.post('/api/ssl', async (req, res) => {
   const { host, port } = req.body;
+  const tls = require('tls');
   
   if (!host) {
     return res.status(400).json({ error: 'Host is required' });
   }
 
-  // Windows에서는 코드 페이지를 UTF-8로 설정
-  const chcpCmd = process.platform === 'win32' ? 'chcp 65001 > nul && ' : '';
-  const command = `${chcpCmd}echo | openssl s_client -servername ${host} -connect ${host}:${port || 443} -showcerts`;
+  try {
+    // 타임아웃 처리를 위한 변수
+    let isResponded = false;
+    let socketClosed = false;
+    let certificateInfo = 'No certificate information available';
+    
+    // 타임아웃 핸들러
+    const timeoutId = setTimeout(() => {
+      if (!isResponded && !socketClosed) {
+        isResponded = true;
+        try {
+          if (socket) socket.destroy();
+        } catch (e) {
+          console.error('소켓 종료 중 오류:', e);
+        }
+        return res.status(500).json({
+          success: false,
+          error: `Connection to ${host}:${port || 443} timed out`
+        });
+      }
+    }, 10000); // 10초 타임아웃
+    
+    // 소켓 연결 생성
+    const socket = tls.connect({
+      host: host,
+      port: port || 443,
+      servername: host, // SNI 지원
+      rejectUnauthorized: false, // 자체 서명 인증서 허용
+    });
 
-  exec(command, { encoding: 'utf8' }, (error, stdout, stderr) => {
-    if (error) {
-      return res.status(500).json({ 
-        success: false,
-        error: error.message, 
-        stderr 
-      });
+    // 연결 성공 이벤트
+    socket.on('secureConnect', () => {
+      try {
+        const cert = socket.getPeerCertificate(true);
+        if (cert && Object.keys(cert).length > 0) {
+          certificateInfo = formatCertificateInfo(cert);
+        }
+        socket.end();
+      } catch (error) {
+        console.error('인증서 정보 처리 오류:', error);
+        if (!isResponded) {
+          isResponded = true;
+          clearTimeout(timeoutId);
+          res.status(500).json({
+            success: false,
+            error: `인증서 정보 처리 오류: ${error.message}`
+          });
+        }
+        socket.destroy();
+      }
+    });
+
+    // 에러 이벤트
+    socket.on('error', (error) => {
+      if (!isResponded) {
+        isResponded = true;
+        clearTimeout(timeoutId);
+        res.status(500).json({
+          success: false,
+          error: `연결 실패: ${error.message}`
+        });
+      }
+      try {
+        socket.destroy();
+      } catch (e) {
+        console.error('에러 후 소켓 종료 오류:', e);
+      }
+    });
+
+    // 종료 이벤트
+    socket.on('end', () => {
+      socketClosed = true;
+      clearTimeout(timeoutId);
+      if (!isResponded) {
+        isResponded = true;
+        res.json({
+          success: true,
+          result: certificateInfo
+        });
+      }
+    });
+    
+    // 닫힘 이벤트
+    socket.on('close', () => {
+      socketClosed = true;
+      clearTimeout(timeoutId);
+      if (!isResponded) {
+        isResponded = true;
+        res.json({
+          success: true,
+          result: certificateInfo
+        });
+      }
+    });
+  } catch (error) {
+    return res.status(500).json({
+      success: false,
+      error: `인증서 확인 실패: ${error.message}`
+    });
+  }
+});
+
+// 인증서 정보를 읽기 쉬운 형식으로 변환
+function formatCertificateInfo(cert) {
+  if (!cert || Object.keys(cert).length === 0) {
+    return 'No certificate information available';
+  }
+
+  try {
+    let result = '=== Certificate Information ===\n\n';
+    
+    // 주체 정보
+    if (cert.subject) {
+      result += 'Subject:\n';
+      for (const key in cert.subject) {
+        result += `  ${key}: ${cert.subject[key]}\n`;
+      }
+      result += '\n';
     }
     
-    res.json({ 
-      success: true,
-      result: stdout 
-    });
-  });
-});
+    // 발급자 정보
+    if (cert.issuer) {
+      result += 'Issuer:\n';
+      for (const key in cert.issuer) {
+        result += `  ${key}: ${cert.issuer[key]}\n`;
+      }
+      result += '\n';
+    }
+    
+    // 유효 기간
+    if (cert.valid_from && cert.valid_to) {
+      result += 'Validity:\n';
+      result += `  Not Before: ${cert.valid_from}\n`;
+      result += `  Not After: ${cert.valid_to}\n\n`;
+    }
+    
+    // 지문
+    if (cert.fingerprint) {
+      result += `Fingerprint: ${cert.fingerprint}\n\n`;
+    }
+    
+    // 서명 알고리즘
+    if (cert.serialNumber) {
+      result += `Serial Number: ${cert.serialNumber}\n`;
+    }
+    
+    // 대체 이름 (Subject Alternative Names)
+    if (cert.subjectaltname) {
+      result += `\nSubject Alternative Names: ${cert.subjectaltname}\n`;
+    }
+    
+    // 인증서 버전
+    if (cert.version) {
+      result += `\nVersion: ${cert.version}\n`;
+    }
+    
+    // 공개키 정보
+    if (cert.bits) {
+      result += `\nKey Size: ${cert.bits} bits\n`;
+    }
+    
+    // 안전하게 처리 가능한 확장 속성들만 포함
+    if (cert.extensions) {
+      result += '\nExtensions:\n';
+      for (const key in cert.extensions) {
+        const ext = cert.extensions[key];
+        if (typeof ext === 'string') {
+          result += `  ${key}: ${ext}\n`;
+        }
+      }
+    }
+    
+    return result;
+  } catch (error) {
+    console.error('인증서 정보 변환 중 오류:', error);
+    return `Certificate information available but could not be formatted: ${error.message}`;
+  }
+}
 
 // WebSocket connection test
 app.post('/api/websocket', (req, res) => {
@@ -735,149 +1042,182 @@ app.post('/api/websocket', (req, res) => {
   }
 });
 
-// WebSocket echo server
+// 실행 중인 프로세스 추적을 위한 Map
+const runningProcesses = new Map();
+
 wss.on('connection', (ws) => {
-  // Store command processes for this connection
-  const processes = new Map();
-  
-  ws.on('message', (message) => {
-    try {
-      const data = JSON.parse(message);
-      
-      // Handle different command types
-      if (data.type === 'command') {
-        const { id, cmd, args } = data;
-        
-        // Stop any existing process with this ID
-        if (processes.has(id)) {
-          const oldProcess = processes.get(id);
-          try {
-            oldProcess.kill();
-          } catch (error) {
-            // Ignore errors when killing process
-          }
-          processes.delete(id);
+    console.log('WebSocket client connected');
+
+    // 웰컴 메시지 전송
+    ws.send(JSON.stringify({
+        type: 'connected',
+        message: 'Connected to WebSocket server'
+    }));
+
+    // 메시지 수신 처리
+    ws.on('message', (message) => {
+        let data;
+        try {
+            data = JSON.parse(message);
+        } catch (e) {
+            ws.send(JSON.stringify({ 
+                type: 'error',
+                error: 'Invalid message format' 
+            }));
+            return;
         }
-        
-        // Handle different commands
-        if (cmd === 'ping') {
-          const host = args.host;
-          const count = args.count && !isNaN(parseInt(args.count)) ? parseInt(args.count) : 4;
-          
-          // Windows에서는 코드 페이지를 UTF-8로 설정
-          const chcpCmd = process.platform === 'win32' ? 'chcp 65001 > nul && ' : '';
-          const command = process.platform === 'win32' 
-            ? `${chcpCmd}ping -n ${count} ${host}` 
-            : `ping -c ${count} ${host}`;
-          
-          // Spawn the process
-          const pingProcess = exec(command, { encoding: 'utf8' });
-          processes.set(id, pingProcess);
-          
-          // Send data as it comes
-          pingProcess.stdout.on('data', (data) => {
-            ws.send(JSON.stringify({
-              type: 'output',
-              id,
-              data,
-              complete: false
+
+        // 명령 실행 요청 처리
+        if (data.type === 'command') {
+            const { cmd, args = [] } = data;
+            const commandId = data.id || `cmd_${Date.now()}`;
+
+            console.log(`Executing command: ${cmd} ${JSON.stringify(args)}`);
+
+            // 지원되는 명령 확인
+            if (!['ping', 'traceroute', 'nslookup'].includes(cmd)) {
+                ws.send(JSON.stringify({
+                    type: 'error',
+                    id: commandId,
+                    data: 'Unsupported command. Supported commands: ping, traceroute, nslookup',
+                }));
+                return;
+            }
+
+            let spawnArgs = [];
+            let command = cmd;
+
+            // 명령별 인자 처리
+            if (cmd === 'ping') {
+                const host = args.host;
+                const count = args.count || 4;
+                
+                // Windows일 경우 명령어 변경 
+                const isWindows = os.platform() === 'win32';
+                if (isWindows) {
+                    spawnArgs = ['-n', count.toString(), host];
+                } else {
+                    spawnArgs = ['-c', count.toString(), host];
+                }
+            } else if (cmd === 'traceroute') {
+                const host = args.host;
+                
+                // Windows일 경우 명령어 변경
+                const isWindows = os.platform() === 'win32';
+                if (isWindows) {
+                    command = 'tracert';
+                    spawnArgs = [host];
+                } else {
+                    spawnArgs = ['-m', '15', host];
+                }
+            } else if (cmd === 'nslookup') {
+                spawnArgs = [args.host];
+            }
+
+            // 명령 실행 프로세스 생성
+            const process = spawn(command, spawnArgs, { 
+                env: { LANG: 'C.UTF-8', LC_ALL: 'C.UTF-8' } 
+            });
+            
+            // 프로세스 Map에 저장
+            runningProcesses.set(commandId, process);
+
+            // 프로세스 ID 전송
+            ws.send(JSON.stringify({ 
+                type: 'start',
+                id: commandId 
             }));
-          });
-          
-          pingProcess.stderr.on('data', (data) => {
-            ws.send(JSON.stringify({
-              type: 'error',
-              id,
-              data,
-              complete: false
-            }));
-          });
-          
-          pingProcess.on('close', (code) => {
-            ws.send(JSON.stringify({
-              type: 'complete',
-              id,
-              exitCode: code,
-              complete: true
-            }));
-            processes.delete(id);
-          });
-        } else if (cmd === 'traceroute') {
-          const host = args.host;
-          
-          // Windows에서는 코드 페이지를 UTF-8로 설정
-          const chcpCmd = process.platform === 'win32' ? 'chcp 65001 > nul && ' : '';
-          const command = process.platform === 'win32' 
-            ? `${chcpCmd}tracert ${host}` 
-            : `traceroute -m 15 ${host}`;
-          
-          // Spawn the process
-          const traceProcess = exec(command, { encoding: 'utf8' });
-          processes.set(id, traceProcess);
-          
-          // Send data as it comes
-          traceProcess.stdout.on('data', (data) => {
-            ws.send(JSON.stringify({
-              type: 'output',
-              id,
-              data,
-              complete: false
-            }));
-          });
-          
-          traceProcess.stderr.on('data', (data) => {
-            ws.send(JSON.stringify({
-              type: 'error',
-              id,
-              data,
-              complete: false
-            }));
-          });
-          
-          traceProcess.on('close', (code) => {
-            ws.send(JSON.stringify({
-              type: 'complete',
-              id,
-              exitCode: code,
-              complete: true
-            }));
-            processes.delete(id);
-          });
-        } else {
-          // Echo unknown commands
-          ws.send(JSON.stringify({
-            type: 'error',
-            id,
-            data: `Unknown command: ${cmd}`,
-            complete: true
-          }));
+
+            // 출력 데이터 처리
+            process.stdout.on('data', (data) => {
+                ws.send(JSON.stringify({
+                    type: 'output',
+                    id: commandId,
+                    data: data.toString()
+                }));
+            });
+
+            // 오류 데이터 처리
+            process.stderr.on('data', (data) => {
+                ws.send(JSON.stringify({
+                    type: 'error',
+                    id: commandId,
+                    data: data.toString()
+                }));
+            });
+
+            // 프로세스 종료 처리
+            process.on('close', (code) => {
+                console.log(`Process terminated, exit code: ${code}`);
+                ws.send(JSON.stringify({
+                    type: 'complete',
+                    id: commandId,
+                    exitCode: code
+                }));
+                
+                // 완료된 프로세스 Map에서 삭제
+                runningProcesses.delete(commandId);
+            });
+
+            // 프로세스 오류 처리
+            process.on('error', (err) => {
+                console.error(`Process error: ${err.message}`);
+                ws.send(JSON.stringify({
+                    type: 'error',
+                    id: commandId,
+                    data: `Command execution error: ${err.message}`
+                }));
+                
+                // 오류 발생 프로세스 Map에서 삭제
+                runningProcesses.delete(commandId);
+            });
         }
-      } else {
-        // Echo back other message types
-        ws.send(`Echo: ${message}`);
-      }
-    } catch (error) {
-      // For non-JSON messages, just echo back
-      ws.send(`Echo: ${message}`);
-    }
-  });
-  
-  ws.on('close', () => {
-    // Clean up all processes when connection closes
-    for (const process of processes.values()) {
-      try {
-        process.kill();
-      } catch (error) {
-        // Ignore errors when killing process
-      }
-    }
-    processes.clear();
-  });
-  
-  ws.send(JSON.stringify({
-    type: 'connected',
-    message: 'Connected to WebSocket server'
-  }));
+        // 취소 명령 처리
+        else if (data.type === 'cancel') {
+            const commandId = data.id || data.processId;
+            
+            if (commandId && runningProcesses.has(commandId)) {
+                const process = runningProcesses.get(commandId);
+                
+                try {
+                    // 프로세스 종료 시도
+                    process.kill();
+                    ws.send(JSON.stringify({
+                        type: 'cancelled',
+                        id: commandId,
+                        message: 'Process canceled successfully'
+                    }));
+                    
+                    // Map에서 삭제
+                    runningProcesses.delete(commandId);
+                } catch (error) {
+                    ws.send(JSON.stringify({
+                        type: 'error',
+                        id: commandId,
+                        data: `Failed to terminate process: ${error.message}`
+                    }));
+                }
+            } else {
+                ws.send(JSON.stringify({
+                    type: 'error',
+                    id: commandId || 'unknown',
+                    data: 'No process found to cancel'
+                }));
+            }
+        }
+        // 에코 테스트 처리
+        else if (data.type === 'echo') {
+            ws.send(JSON.stringify({
+                type: 'echo',
+                data: data.data || 'Echo from server'
+            }));
+        }
+    });
+
+    // 연결 종료 처리
+    ws.on('close', () => {
+        console.log('WebSocket client disconnected');
+    });
 });
 
 // Real-time Command Endpoint (for streaming commands)
@@ -959,7 +1299,135 @@ app.post('/api/udp', (req, res) => {
   });
 });
 
+// Curl 테스트 (HTTP 요청 상세 정보)
+app.post('/api/curl', (req, res) => {
+  const { url, method, headers, data, options } = req.body;
+  
+  if (!url) {
+    return res.status(400).json({ 
+      success: false,
+      error: 'URL is required' 
+    });
+  }
+  
+  // Windows 환경에서 curl이 설치되어 있는지 먼저 확인
+  if (process.platform === 'win32') {
+    exec('where curl', (error, stdout, stderr) => {
+      if (error) {
+        console.error('curl command not found in PATH:', error);
+        return res.status(500).json({
+          success: false,
+          error: 'curl command not found. Please install curl and add it to your PATH.'
+        });
+      } else {
+        console.log('curl found at:', stdout.trim());
+        executeCurlCommand();
+      }
+    });
+  } else {
+    // Linux/Mac에서는 바로 실행
+    executeCurlCommand();
+  }
+  
+  function executeCurlCommand() {
+    // curl 명령어 구성
+    let curlCmd = 'curl';
+    
+    // 요청 방식 설정
+    if (method && method !== 'GET') {
+      curlCmd += ` -X ${method}`;
+    }
+    
+    // 헤더 추가
+    if (headers && typeof headers === 'object') {
+      Object.entries(headers).forEach(([key, value]) => {
+        curlCmd += ` -H "${key}: ${value.replace(/"/g, '\\"')}"`;
+      });
+    }
+    
+    // 요청 데이터 추가
+    if (data) {
+      // JSON 데이터인 경우 Content-Type 헤더 추가
+      if (typeof data === 'object') {
+        curlCmd += ` -H "Content-Type: application/json"`;
+        curlCmd += ` -d '${JSON.stringify(data)}'`;
+      } else {
+        curlCmd += ` -d '${data}'`;
+      }
+    }
+    
+    // 추가 옵션 (예: -v, -i 등)
+    if (options) {
+      curlCmd += ` ${options}`;
+    }
+    
+    // 최종 URL 추가
+    curlCmd += ` "${url}"`;
+    
+    // Windows에서는 코드 페이지를 UTF-8로 설정
+    const chcpCmd = process.platform === 'win32' ? 'chcp 65001 > nul && ' : '';
+    const command = `${chcpCmd}${curlCmd}`;
+    
+    console.log('Executing curl command:', command);
+    
+    // 확장된 환경 변수 설정
+    const env = {
+      ...process.env,
+      LANG: 'C.UTF-8',
+      LC_ALL: 'C.UTF-8'
+    };
+    
+    // 명령 실행
+    exec(command, { 
+      encoding: 'utf8', 
+      maxBuffer: 1024 * 1024 * 10,
+      env: env,
+      timeout: 30000 // 30초 타임아웃
+    }, (error, stdout, stderr) => {
+      console.log('curl execution completed');
+      
+      if (error) {
+        console.error('curl execution error:', error);
+        console.error('stderr:', stderr);
+      } else {
+        console.log('curl executed successfully');
+      }
+      
+      let result = {
+        success: !error,
+        command: curlCmd,
+        stdout: stdout || '',
+        stderr: stderr || ''
+      };
+      
+      if (error) {
+        result.error = error.message;
+        console.error('Curl execution error:', error);
+        
+        // Even with error, we might have partial results
+        // For example, a 404 status will return an error but the command still ran
+        if (stdout || stderr) {
+          result.success = true;
+          result.partialSuccess = true;
+          result.note = 'Command executed but returned a non-zero exit code';
+        }
+      }
+      
+      // Try to parse the response if it looks like JSON
+      if (stdout && stdout.trim().startsWith('{') && stdout.trim().endsWith('}')) {
+        try {
+          result.parsedResponse = JSON.parse(stdout);
+        } catch (e) {
+          console.log('Response is not valid JSON');
+        }
+      }
+      
+      res.json(result);
+    });
+  }
+});
+
 // Start server
 server.listen(port, '0.0.0.0', () => {
   console.log(`Server running on port ${port}`);
-}); 
+});

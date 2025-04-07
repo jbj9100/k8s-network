@@ -104,16 +104,13 @@ body {
 
 .test-header {
     display: flex;
-    justify-content: space-between;
     align-items: center;
-    padding: 1rem 1.25rem;
-    background-color: #fff;
-    border-bottom: 1px solid #eaeaea;
+    margin-bottom: 1rem;
+    flex-wrap: wrap;
 }
 
 .test-header h5 {
-    margin: 0;
-    font-size: 1.1rem;
+    margin: 0 0.5rem 0 0;
 }
 
 .test-body {
@@ -155,7 +152,7 @@ body {
 }
 
 .hidden {
-    display: none;
+    display: none !important;
 }
 
 .btn-primary {
@@ -173,29 +170,35 @@ body {
 
 .badge {
     display: inline-block;
-    padding: 0.35em 0.65em;
-    font-size: 0.75em;
+    padding: 0.25em 0.4em;
+    font-size: 75%;
     font-weight: 700;
     line-height: 1;
     text-align: center;
     white-space: nowrap;
-    vertical-align: baseline;
+    vertical-align: middle;
     border-radius: 0.25rem;
+    margin-right: 0.5rem;
+}
+
+.badge-ready {
     background-color: #6c757d;
     color: white;
 }
 
-.badge.bg-success {
-    background-color: #198754;
-}
-
-.badge.bg-danger {
-    background-color: #dc3545;
-}
-
-.badge.bg-warning {
+.badge-running {
     background-color: #ffc107;
-    color: #000;
+    color: #212529;
+}
+
+.badge-completed {
+    background-color: #28a745;
+    color: white;
+}
+
+.badge-failed {
+    background-color: #dc3545;
+    color: white;
 }
 
 /* 실시간 옵션 스타일 */
@@ -437,4 +440,164 @@ body {
     border-radius: 4px;
     max-height: 300px;
     overflow-y: auto;
+}
+
+/* Action bar for test controls */
+.action-bar {
+    margin-left: auto;
+    display: flex;
+    align-items: center;
+}
+
+/* Cancel test button */
+.cancel-test-btn {
+    background-color: #dc3545;
+    color: white;
+    border: none;
+    padding: 0.25rem 0.5rem;
+    border-radius: 0.25rem;
+    font-size: 0.875rem;
+    cursor: pointer;
+    transition: background-color 0.2s;
+}
+
+.cancel-test-btn:hover {
+    background-color: #c82333;
+}
+
+/* Curl 테스트 결과 스타일 */
+.curl-command {
+    padding: 0.5rem;
+    margin-bottom: 0.5rem;
+    background-color: #2d2d2d;
+    color: #f8f8f8;
+    border-radius: 4px;
+    font-family: monospace;
+    white-space: pre-wrap;
+    word-break: break-all;
+}
+
+.curl-stdout pre, .curl-stderr pre {
+    margin: 0;
+    padding: 0.5rem;
+    white-space: pre-wrap;
+    word-break: break-all;
+    max-height: 500px;
+    overflow-y: auto;
+    background-color: #f5f5f5;
+    border-radius: 4px;
+}
+
+.curl-stderr pre {
+    background-color: #fff8f8;
+    color: #a94442;
+}
+
+/* 테이블 응답 */
+.table-responsive {
+    overflow-x: auto;
+    margin-bottom: 1rem;
+}
+
+.result-table {
+    width: 100%;
+    border-collapse: collapse;
+    margin-bottom: 1rem;
+}
+
+.result-table th, .result-table td {
+    padding: 0.5rem;
+    text-align: left;
+    border: 1px solid #ddd;
+}
+
+.result-table th {
+    background-color: #f1f1f1;
+    font-weight: bold;
+}
+
+.result-table tr:nth-child(even) {
+    background-color: #f9f9f9;
+}
+
+.result-table tr:hover {
+    background-color: #f2f2f2;
+}
+
+/* 탭 스타일링 */
+.tabs {
+    display: flex;
+    margin-bottom: 1rem;
+    border-bottom: 1px solid #ccc;
+}
+
+.tab-button {
+    background-color: transparent;
+    border: none;
+    padding: 10px 15px;
+    cursor: pointer;
+    margin-right: 5px;
+    border-radius: 4px 4px 0 0;
+    font-weight: normal;
+    color: #555;
+    position: relative;
+    bottom: -1px;
+}
+
+.tab-button:hover {
+    background-color: #f5f5f5;
+    color: #333;
+}
+
+.tab-button.active {
+    background-color: #fff;
+    border: 1px solid #ccc;
+    border-bottom: 1px solid #fff;
+    color: #333;
+    font-weight: bold;
+}
+
+.tab-content {
+    padding: 15px 0;
+}
+
+.tab-content.hidden {
+    display: none;
+}
+
+.tab-content h6 {
+    margin-top: 0;
+    margin-bottom: 1rem;
+    font-size: 1rem;
+    font-weight: bold;
+    color: #333;
+}
+
+/* k8s 테스트 스타일링 */
+#k8s-form .form-group {
+    margin-bottom: 0.8rem;
+}
+
+.result-item strong {
+    color: #007bff;
+}
+
+.result-item.success strong {
+    color: #28a745;
+}
+
+.result-item pre {
+    background-color: #f8f9fa;
+    padding: 10px;
+    border-radius: 4px;
+    overflow-x: auto;
+    margin: 5px 0;
+}
+
+/* 작은 도움말 텍스트 */
+.help-text {
+    font-size: 0.75rem;
+    color: #6c757d;
+    display: block;
+    margin-top: 0.25rem;
 } 
