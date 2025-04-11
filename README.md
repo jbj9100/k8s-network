@@ -79,3 +79,5 @@ docker run -d --name network-tester -p 3000:3000 --privileged k8s-network-test
 ## 접속 방법
 
 브라우저에서 `http://localhost:3000`로 접속합니다.
+
+수정1
